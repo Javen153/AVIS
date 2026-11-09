@@ -8,6 +8,7 @@ obj/
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 *.pt
 *.onnx
 *.onnx.data
