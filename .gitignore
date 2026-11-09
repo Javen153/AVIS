@@ -21,3 +21,5 @@ ml/.pytest_cache/
 ml/.mypy_cache/
 dist/
 models/v1preview/
+models/*/weights.bin
+models/*/frontend.json
