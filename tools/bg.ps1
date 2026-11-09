@@ -12,11 +12,9 @@ if (-not $WorkDir) { $WorkDir = $root }
 $log = Join-Path $bgDir "$Name.log"
 $pidFile = Join-Path $bgDir "$Name.pid"
 $full = 'cmd.exe /d /s /c "' + $Cmd.Replace('"','""') + ' >> "' + $log + '" 2>&1"'
-$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = 0 }
 $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine = $full
     CurrentDirectory = $WorkDir
-    ProcessStartupInformation = $startup
 }
 if ($res.ReturnValue -ne 0) { throw ("Win32_Process.Create failed: " + $res.ReturnValue) }
 Set-Content -Path $pidFile -Value $res.ProcessId

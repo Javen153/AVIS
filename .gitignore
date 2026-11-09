@@ -1,6 +1,7 @@
 testdata/
 artifacts/
 logs/
+ml/models/
 bin/
 obj/
 .vs/
