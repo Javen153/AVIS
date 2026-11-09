@@ -8,6 +8,8 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>avis-cli</AssemblyName>
+    <!-- Match the app runtime: no tiered-JIT promotion stalls in benches (D-022). -->
+    <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Avis.Core\Avis.Core.csproj" />

@@ -57,6 +57,7 @@ public sealed class AvisEngine : IDisposable
                     ? AvisPaths.ModelDir(_settings.ModelName) : _settings.ModelDirOverride;
                 if (!ModelAvailable(dir)) throw new FileNotFoundException("нет model.onnx в " + dir);
                 var neural = new NeuralObjectSource(_weights, dir, _settings);
+                Warmup(neural);
                 src = neural;
                 status = $"Нейро {neural.ModelVersion} · {neural.Provider}";
             }
@@ -86,6 +87,23 @@ public sealed class AvisEngine : IDisposable
             Status = status;
         }
         return true;
+    }
+
+    /// <summary>First ORT call allocates arenas and compiles kernels (~tens of ms).
+    /// Feed silence a few times so the realtime loop never pays that cost.</summary>
+    private static void Warmup(NeuralObjectSource n)
+    {
+        var f = new FrontendFrame
+        {
+            TimeSec = 0,
+            BandsDbM = new float[FrontendWeights.Bands],
+            PM = new float[FrontendWeights.Bands],
+            PL = new float[FrontendWeights.Bands],
+            PR = new float[FrontendWeights.Bands],
+            Features = new float[3 * FrontendWeights.Bands],
+        };
+        for (int i = 0; i < 3; i++) n.Process(f, 0);
+        n.Reset();
     }
 
     public void ApplySettings(AppSettings s)
