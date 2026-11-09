@@ -22,7 +22,7 @@ $modelDir = Join-Path $root "models\$Model"
 $hasModel = Test-Path (Join-Path $modelDir 'model.onnx')
 
 if ($Only) { $want = $Only.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() } }
-else { $want = @('build', 'unit', 'frontend', 'model', 'scenarios', 'render', 'app') }
+else { $want = @('build', 'unit', 'frontend', 'model', 'scenarios', 'render', 'latency', 'app') }
 if ($want -contains 'ml') { $want += 'model' }
 
 $results = New-Object System.Collections.Generic.List[object]
@@ -146,6 +146,22 @@ Measure-Check 'render' {
     $bl = ($bench | Select-String 'render submit' | Select-Object -First 1)
     if ($lit -lt 10) { return @{ Status = 'FAIL'; Detail = "offscreen PNG has $lit lit samples" } }
     @{ Status = $(if ($ok) { 'PASS' } else { 'FAIL' }); Detail = "png $($png.Name) lit=$lit; " + $(if ($bl) { $bl.Line.Trim() } else { '' }) }
+}
+
+Measure-Check 'latency' {
+    if (-not (Test-Path $cli)) { return @{ Status = 'FAIL'; Detail = 'avis-cli.exe missing' } }
+    $lines = @(); $ok = $true
+    $text = & $cli bench --what latency --source dsp 2>&1
+    if ($LASTEXITCODE -ne 0) { $ok = $false }
+    $l = ($text | Select-String 'capture->snapshot' | Select-Object -First 1)
+    $lines += $(if ($l) { $l.Line.Trim() } else { 'dsp: no output' })
+    if ($hasModel -and $Source -ne 'dsp') {
+        $text2 = & $cli bench --what latency --source neural --model $modelDir 2>&1
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+        $l2 = ($text2 | Select-String 'capture->snapshot' | Select-Object -First 1)
+        $lines += $(if ($l2) { $l2.Line.Trim() } else { 'neural: no output' })
+    }
+    @{ Status = $(if ($ok) { 'PASS' } else { 'FAIL' }); Detail = ($lines -join '; ') }
 }
 
 Measure-Check 'app' {

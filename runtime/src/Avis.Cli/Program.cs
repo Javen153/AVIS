@@ -65,7 +65,7 @@ internal static class Program
               analyze --in a.wav [--source dsp|neural|mock] [--model models/v1] [--debug] --out frames.jsonl
               render  --frames frames.jsonl --out dir [--view main|spectro|masks|table] [--every 10] [--w 960] [--h 360]
               check   --frames frames.jsonl --expect S01.expect.json --out result.json
-              bench   --what frontend|model|tracker|render [--seconds 5]
+              bench   --what frontend|model|tracker|render|latency [--seconds 5]
               parity  --golden shared/golden [--model models/v1]
               capture-test --seconds 5 --out cap.wav
             Common: --weights <path> --set group.name=value --verbose --warp

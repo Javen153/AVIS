@@ -16,6 +16,7 @@ internal static class BenchRunner
             case "model": return Model(arg, flags);
             case "tracker": return Tracker(arg, flags);
             case "render": return Render(arg, flags);
+            case "latency": return Latency(arg, flags);
             default:
                 Console.Error.WriteLine($"unknown bench target '{what}'");
                 return 2;
@@ -169,8 +170,81 @@ internal static class BenchRunner
         return s50 <= 3.0 ? 0 : 1;
     }
 
-    private static (double p50, double p99) Percentiles(List<double> values)
+    /// <summary>End-to-end hop cost: frontend -> source/tracker -> offscreen render submit.</summary>
+    private static int Latency(Func<string, string, string> arg, HashSet<string> flags)
     {
+        string wav = arg("wav", Path.Combine(AvisPaths.Scenarios, "S09.wav"));
+        if (!File.Exists(wav)) { Console.WriteLine("SKIP latency: wav missing " + wav); return 0; }
+        string kind = arg("source", "dsp").ToLowerInvariant();
+        var w = Weights(arg("weights", AvisPaths.Weights));
+        IObjectSource src;
+        if (kind == "neural")
+        {
+            string dir = arg("model", Path.Combine(AvisPaths.Models, "v1"));
+            if (!Directory.Exists(dir)) dir = AvisPaths.ModelDir(dir);
+            if (!File.Exists(Path.Combine(dir, "model.onnx")))
+            {
+                Console.WriteLine("SKIP latency: model.onnx missing");
+                return 0;
+            }
+            src = new NeuralObjectSource(w, dir, new AppSettings());
+            kind = "neural";
+        }
+        else
+        {
+            src = new DspObjectSource(w);
+            kind = "dsp";
+        }
+
+        var file = WavIo.Read(wav);
+        if (file.SampleRate != FrontendWeights.SampleRate)
+        {
+            Console.WriteLine($"SKIP latency: {file.SampleRate} Hz wav, need {FrontendWeights.SampleRate}");
+            return 0;
+        }
+        var stereo = WavIo.ToStereo(file.Interleaved, file.Channels);
+        var stream = new FrontendStream(w);
+        var settings = new AppSettings();
+        using var renderer = new Renderer(1920, 1080);
+
+        int hop = FrontendWeights.Hop * 2;
+        double hopMs = 1000.0 * FrontendWeights.Hop / FrontendWeights.SampleRate;
+        int warm = Math.Min(stereo.Length, FrontendWeights.SampleRate * 2);
+        int off = 0;
+        for (; off + hop <= warm; off += hop)
+        {
+            foreach (var f in stream.Push(stereo.AsSpan(off, hop))) src.Process(f, f.TimeSec);
+        }
+
+        var times = new List<double>();
+        for (; off + hop <= stereo.Length; off += hop)
+        {
+            var sw = Stopwatch.StartNew();
+            var frames = stream.Push(stereo.AsSpan(off, hop));
+            AnalysisFrame? last = null;
+            foreach (var f in frames) last = src.Process(f, f.TimeSec);
+            if (last != null)
+            {
+                renderer.Render(last, settings, last.T, 1.0 / 144.0);
+                renderer.Context.Flush();
+            }
+            times.Add(sw.Elapsed.TotalMilliseconds);
+        }
+
+        if (times.Count == 0) { Console.WriteLine("SKIP latency: no hops"); return 0; }
+        var sorted = times.OrderBy(v => v).ToList();
+        double p50 = At(sorted, 0.50), p95 = At(sorted, 0.95), p99 = At(sorted, 0.99);
+        double total95 = p95 + hopMs;
+        Console.WriteLine($"latency [{kind}] {times.Count} hops, compute p50 {p50:F2} p95 {p95:F2} p99 {p99:F2} ms");
+        Console.WriteLine($"latency capture->snapshot p95 {total95:F2} ms (compute + {hopMs:F1} ms hop wait, limit 30; present adds <=7 ms at 144 Hz)");
+        Console.WriteLine($"{(total95 <= 30.0 ? "PASS" : "FAIL")} latency p95 <= 30 ms");
+        return total95 <= 30.0 ? 0 : 1;
+    }
+
+    private static double At(List<double> sorted, double q) =>
+        sorted[Math.Clamp((int)Math.Round((sorted.Count - 1) * q), 0, sorted.Count - 1)];
+
+    private static (double p50, double p99) Percentiles(List<double> values)    {
         if (values.Count == 0) return (0, 0);
         var sorted = values.OrderBy(v => v).ToList();
         return (sorted[(int)(sorted.Count * 0.50)], sorted[Math.Min(sorted.Count - 1, (int)(sorted.Count * 0.99))]);

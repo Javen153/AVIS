@@ -4,7 +4,8 @@ param(
     [string]$Source = 'dsp',
     [string]$Only = '',
     [string]$Out = '',
-    [string]$Model = ''
+    [string]$Model = '',
+    [string[]]$Set = @()
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -25,8 +26,12 @@ foreach ($wav in $wavs) {
     $result = Join-Path $Out "$id.result.json"
     $args = @('analyze', '--in', $wav.FullName, '--source', $Source, '--out', $jsonl)
     if ($Model) { $args += @('--model', $Model) }
-    & $exe @args | Out-Null
-    if ($LASTEXITCODE -ne 0) { $rows += [pscustomobject]@{ Id = $id; Pass = $false; Detail = 'analyze failed' }; $failed++; continue }
+    foreach ($kv in $Set) { $args += @('--set', $kv) }
+    $outText = & $exe @args 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ($outText | Out-String)
+        $rows += [pscustomobject]@{ Id = $id; Pass = $false; Detail = 'analyze failed' }; $failed++; continue
+    }
     $checkArgs = @('check', '--frames', $jsonl, '--expect', (Join-Path $root "testdata\scenarios\$id.expect.json"), '--out', $result)
     $text = & $exe @checkArgs
     $code = $LASTEXITCODE
