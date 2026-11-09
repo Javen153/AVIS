@@ -39,6 +39,7 @@ public sealed class AvisEngine : IDisposable
     }
 
     public string WavPath { get; set; } = "";
+    public volatile bool Paused;
 
     public static bool ModelAvailable(string dir) => File.Exists(Path.Combine(dir, "model.onnx"));
 
@@ -144,6 +145,7 @@ public sealed class AvisEngine : IDisposable
         };
         while (_running)
         {
+            if (Paused) { Thread.Sleep(20); continue; }
             IObjectSource? src;
             lock (_lock) src = _source;
             if (src == null) { Thread.Sleep(5); continue; }

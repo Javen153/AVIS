@@ -343,6 +343,7 @@ public sealed class ObjectTracker
                 st.State = "fading";
                 st.LoudnessDb = st.LoudnessDb - obj.NoBands * 0.5f;
                 st.AgeSec = (float)((_frame - obj.BornFrame) / 100.0);
+                if (st.Presence < 0.02f) continue;
                 frame.Objects.Add(st);
             }
         }
