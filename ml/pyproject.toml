@@ -1,0 +1,29 @@
+[project]
+name = "avis-ml"
+version = "0.1.0"
+description = "AVIS training pipeline: FE-v1 frontend, mixer, M-v1 model, export"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "numpy>=1.26,<3",
+  "scipy>=1.11",
+  "soundfile>=0.12",
+  "librosa>=0.10.2",
+  "pretty_midi>=0.2.10",
+  "pyyaml>=6",
+  "tensorboard>=2.15",
+  "pytest>=8",
+  "onnx>=1.16",
+  "onnxruntime>=1.18",
+  "tqdm>=4.66",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["avis_ml*"]
