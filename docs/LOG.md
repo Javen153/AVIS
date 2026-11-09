@@ -43,3 +43,18 @@
 - Финальные прогоны: нейро **9/13**, DSP **9/13** (обязательные 7/7), паритет 6.5e-6,
   tracking: count_in_range 0.818, id_switches 0, reid 1.0.
 
+- 2026-11-09 P9: `FftPlan` переписан на 4 сигнала в дорожках `Vector4` (M/L/R/S за
+  один проход). `bench frontend` p50 0.71 → **0.24–0.25 мс**, паритет 3.9e-6, xUnit 7/7
+  (D-020).
+- `IntraOpNumThreads` 0 → **1** (2.0 против 3.8 мс при 12 потоках). DirectML измерен
+  (infer 2.8, total 3.7 мс) и откатан — CPU быстрее (D-019).
+- Визуальная проверка PNG выявила: partial loudness (+19…+48 «дБ») прижимал объекты
+  к верху. Добавлена нормировка на суммарную сжатию энергию, partial теперь в шкале
+  −70…0 дБ (D-021).
+- `tools/publish.ps1` больше не содержит кириллицы в литералах (PowerShell 5.1 читал
+  файл как ANSI и падал); добавлен `tools/shortcut.ps1` — ярлык AVIS на рабочем столе.
+- `dist\AVIS` собран (296 МБ): mock FPS p50 164.96, neural FPS 165.15, analysis p50
+  3.38 мс, скриншот и bench в `artifacts/dist`.
+- PNG-пресеты на S09 и процедурном миксе (`tools/make_demo_mix.py`) — в
+  `artifacts/visual`; FINAL_REPORT.md и ГОТОВО.txt написаны.
+

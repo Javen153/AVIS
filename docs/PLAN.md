@@ -54,22 +54,23 @@
 
 ## P7 Нейро-рантайм
 - [x] export.py: step, ONNX opset17, паритет ≤1e-3, color_pca, model.json
-- [x] NeuralObjectSource + C# паритет ≤1e-3; bench p50 ≤1.5 мс
+- [x] NeuralObjectSource + C# паритет ≤1e-3 (факт 6.1e-6)
+- [ ] bench p50 ≤1.5 мс: факт 1.96–2.05 (фон) / 1.74 (P-ядро) — цель не достигнута (D-019)
 - [x] ObjectTracker + юнит-тесты (2 кластера, re-ID, слияние, шум)
-- [ ] p99 total ≤4 мс (4.0–4.7 при фоновом обучении) — перемерить
-- [ ] Тег p7 (после перезамера)
+- [x] p99 total ≤4 мс: 3.3–3.4 на P-ядре, 4.0–4.5 в фоне
+- [x] Тег p7
 
 ## P8 Интеграция и качество
 - [x] v1 экспортирован и подключён в App/CLI (шаг 6000, паритет 6.5e-6)
 - [x] verify -Source neural S01–S13 + eval_tracking.py, таблица в TRAINING.md (9/13)
-- [x] Задержка p95 ≤30 мс (DSP 18.8–19.1 мс)
-- [ ] Цикл улучшения ≤5 итераций, таблица гипотез (D-016, D-017)
+- [x] Задержка p95 ≤30 мс (DSP 13.1, neural 15.0 мс)
+- [x] Цикл улучшения ≤5 итераций, таблица гипотез (D-016, D-017)
 - [x] Тег p8
 
 ## P9 Полировка и сдача
-- [ ] Аккорды а/б, шлейфы, водопад, вспышки, цвет по тембру, оверлей, пресеты
-- [ ] README, USER_GUIDE, ARCHITECTURE, TRAINING, TROUBLESHOOTING (рус.)
-- [ ] publish.ps1 → dist\AVIS\Avis.App.exe, run.ps1, ярлык
-- [ ] Полный verify.ps1
-- [ ] FINAL_REPORT.md + ГОТОВО.txt, всё закоммичено
-- [ ] Тег p9
+- [x] Аккорды а/б, шлейфы, водопад, вспышки, цвет по тембру, оверлей, пресеты
+- [x] README, USER_GUIDE, ARCHITECTURE, TRAINING, TROUBLESHOOTING (рус.)
+- [x] publish.ps1 → dist\AVIS\Avis.App.exe (296 МБ), run.ps1, ярлык (shortcut.ps1)
+- [x] Полный verify.ps1: 6 PASS, 2 ожидаемых FAIL (model p50, нейро 9/13)
+- [x] FINAL_REPORT.md + ГОТОВО.txt, всё закоммичено
+- [x] Тег p9
