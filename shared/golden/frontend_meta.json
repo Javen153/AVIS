@@ -1,0 +1,8 @@
+{
+ "sr": 48000,
+ "hop": 480,
+ "frames": 300,
+ "bands": 192,
+ "input": "frontend_input.f32 interleaved stereo float32",
+ "output": "frontend_expected.f32 [T,3,192] float32"
+}
