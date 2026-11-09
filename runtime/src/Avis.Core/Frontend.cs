@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Text;
 
 namespace Avis.Core;
@@ -57,7 +58,6 @@ public sealed class FrontendStream
     private readonly float[] _m;
     private readonly float[] _s;
     private readonly float[] _powL, _powR, _powM, _powS;
-    private readonly float[] _scratch = new float[4096];
     private float[] _buf;
     private int _len;
     private long _frameIndex;
@@ -148,16 +148,18 @@ public sealed class FrontendStream
         for (int ri = 0; ri < _plans.Length; ri++)
         {
             int n = FrontendWeights.Resolutions[ri];
-            var win = _windows[ri];
-            int offset = N0 - n;
-            for (int i = 0; i < n; i++) _scratch[i] = _m[offset + i] * win[i];
-            ComputePower(ri, _scratch, _powM);
-            for (int i = 0; i < n; i++) _scratch[i] = _l[offset + i] * win[i];
-            ComputePower(ri, _scratch, _powL);
-            for (int i = 0; i < n; i++) _scratch[i] = _r[offset + i] * win[i];
-            ComputePower(ri, _scratch, _powR);
-            for (int i = 0; i < n; i++) _scratch[i] = _s[offset + i] * win[i];
-            ComputePower(ri, _scratch, _powS);
+            var plan = _plans[ri];
+            plan.ForwardReal4(_m, _l, _r, _s, N0 - n, _windows[ri]);
+            float denom = _sumW[ri];
+            int half = n / 2;
+            for (int b = 0; b <= half; b++)
+            {
+                Vector4 re = plan.Re[b], im = plan.Im[b];
+                _powM[b] = (re.X * re.X + im.X * im.X) / denom;
+                _powL[b] = (re.Y * re.Y + im.Y * im.Y) / denom;
+                _powR[b] = (re.Z * re.Z + im.Z * im.Z) / denom;
+                _powS[b] = (re.W * re.W + im.W * im.W) / denom;
+            }
             for (int k = 0; k < FrontendWeights.Bands; k++)
             {
                 if (_w.Nfft[k] != n) continue;
@@ -199,13 +201,4 @@ public sealed class FrontendStream
         };
     }
 
-    private void ComputePower(int ri, float[] signal, float[] power)
-    {
-        var plan = _plans[ri];
-        plan.ForwardReal(signal.AsSpan(0, plan.N));
-        float denom = _sumW[ri];
-        int half = plan.N / 2;
-        for (int b = 0; b <= half; b++)
-            power[b] = (plan.Re[b] * plan.Re[b] + plan.Im[b] * plan.Im[b]) / denom;
-    }
 }
