@@ -87,7 +87,9 @@ public sealed class NeuralObjectSource : IObjectSource
     private static int OrtThreads()
     {
         var env = Environment.GetEnvironmentVariable("AVIS_ORT_THREADS");
-        return int.TryParse(env, out var n) && n >= 0 ? n : 0;
+        // Batch=1 GRU: extra intra-op threads only add hand-off latency on this CPU
+        // (1 thread 1.9 ms p50 vs 12 threads 3.8 ms, D-019).
+        return int.TryParse(env, out var n) && n >= 0 ? n : 1;
     }
 
     public void Reset()

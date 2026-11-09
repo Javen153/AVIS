@@ -55,8 +55,14 @@ internal static class BenchRunner
             return 0;
         }
         var w = Weights(arg("weights", AvisPaths.Weights));
+        // The analysis thread runs AboveNormal in the app; match it here so the bench
+        // is not starved by background work on a laptop with P/E cores.
+        try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { }
         var settings = new AppSettings();
+        if (arg("provider", "cpu").Equals("directml", StringComparison.OrdinalIgnoreCase))
+            settings.Provider = InferenceProvider.DirectML;
         var src = new NeuralObjectSource(w, dir, settings);
+        Console.WriteLine($"provider: {src.Provider}");
         var stream = new FrontendStream(w);
         var frames = stream.Push(Program.ReadFloats(Path.Combine(AvisPaths.Golden, "frontend_input.f32")));
         for (int i = 0; i < 60; i++) src.Process(frames[i % frames.Count], frames[i % frames.Count].TimeSec);
@@ -74,8 +80,8 @@ internal static class BenchRunner
             }
         }
         var (p50, p99) = Percentiles(times);
-        var (i50, _) = Percentiles(infer);
-        Console.WriteLine($"model: {times.Count} passes, infer p50 {i50:F2} ms, total p50 {p50:F2} ms p99 {p99:F2} ms (limit 1.5)");
+        var (i50, i99) = Percentiles(infer);
+        Console.WriteLine($"model: {times.Count} passes, infer p50 {i50:F2} p99 {i99:F2} ms, total p50 {p50:F2} ms p99 {p99:F2} ms (limit 1.5)");
         bool pass = i50 <= 1.5 && p99 <= 4.0;
         Console.WriteLine($"{(pass ? "PASS" : "FAIL")} model p50 <= 1.5 ms and frontend+model+tracker p99 <= 4 ms");
         return pass ? 0 : 1;
