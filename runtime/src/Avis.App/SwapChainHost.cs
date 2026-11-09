@@ -23,6 +23,13 @@ public sealed class SwapChainHost : IDisposable
     public int Height => _height;
     public bool Ready => _swap != null && _rtv != null;
     public string? Error { get; private set; }
+    /// <summary>Diagnostics: present calls, accepted frames and the last HRESULT.</summary>
+    public long PresentCalls { get; private set; }
+    public long PresentOk { get; private set; }
+    public long PresentOccluded { get; private set; }
+    public int LastPresentResult { get; private set; }
+    /// <summary>Guards D3D11 context use between the render thread and UI screenshots/resize.</summary>
+    public readonly object Sync = new();
 
     public SwapChainHost(Renderer renderer, SwapChainPanel panel)
     {
@@ -31,6 +38,11 @@ public sealed class SwapChainHost : IDisposable
     }
 
     public void Ensure(int width, int height)
+    {
+        lock (Sync) EnsureCore(width, height);
+    }
+
+    private void EnsureCore(int width, int height)
     {
         width = Math.Max(64, width);
         height = Math.Max(64, height);
@@ -132,17 +144,28 @@ public sealed class SwapChainHost : IDisposable
 
     public bool Render(AnalysisFrame frame, AppSettings settings, double t, double dt)
     {
-        if (_swap == null || _rtv == null) return false;
-        _renderer.Render(frame, settings, t, dt, _rtv);
-        var hr = _swap.Present(1, PresentFlags.None);
-        return hr >= 0 || hr == 0x087A0001; // DXGI_STATUS_OCCLUDED
+        lock (Sync)
+        {
+            if (_swap == null || _rtv == null) return false;
+            _renderer.Render(frame, settings, t, dt, _rtv);
+            var hr = _swap.Present(1, PresentFlags.None);
+            PresentCalls++;
+            LastPresentResult = hr.Code;
+            if (hr == 0x087A0001) PresentOccluded++;
+            bool ok = hr >= 0 || hr == 0x087A0001; // DXGI_STATUS_OCCLUDED
+            if (ok) PresentOk++;
+            return ok;
+        }
     }
 
     public void Dispose()
     {
-        _rtv?.Dispose();
-        _swap?.Dispose();
-        _rtv = null;
-        _swap = null;
+        lock (Sync)
+        {
+            _rtv?.Dispose();
+            _swap?.Dispose();
+            _rtv = null;
+            _swap = null;
+        }
     }
 }

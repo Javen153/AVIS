@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using Avis.Core;
 using Avis.Render;
@@ -7,8 +7,10 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
+using VirtualKey = Windows.System.VirtualKey;
+using VirtualKeyModifiers = Windows.System.VirtualKeyModifiers;
 using Windows.UI;
 
 namespace Avis.App;
@@ -26,12 +28,17 @@ public sealed class MainWindow : Window
     private Renderer? _renderer;
     private SwapChainHost? _swap;
     private AvisEngine? _engine;
-    private DispatcherQueueTimer? _timer;
+    private Thread? _renderThread;
+    private DispatcherQueueTimer? _uiTimer;
+    private volatile bool _renderRun;
+    private readonly object _statLock = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly List<double> _frameTimes = new();
     private readonly List<double> _renderTimes = new();
     private double _lastTick;
     private double _lastStats;
+    private double _firstFrameSec;
+    private long _iters;
     private bool _overlay;
     private bool _initialised;
     private bool _shotTaken;
@@ -101,7 +108,30 @@ public sealed class MainWindow : Window
         Grid.SetColumn(_settingsView, 1);
 
         root.Children.Add(body);
+        AddAccelerators(root);
         return root;
+    }
+
+    private void AddAccelerators(UIElement root)
+    {
+        void Add(VirtualKey key, VirtualKeyModifiers mods, Action action)
+        {
+            var acc = new KeyboardAccelerator { Key = key, Modifiers = mods };
+            acc.Invoked += (_, e) => { e.Handled = true; action(); };
+            root.KeyboardAccelerators.Add(acc);
+        }
+        Add(VirtualKey.F11, VirtualKeyModifiers.None, () => SetOverlay(!_overlay));
+        Add(VirtualKey.Escape, VirtualKeyModifiers.None, () => { if (_overlay) SetOverlay(false); });
+        Add(VirtualKey.F12, VirtualKeyModifiers.None, () => TakeScreenshot());
+        Add(VirtualKey.Space, VirtualKeyModifiers.None, TogglePause);
+        Add(VirtualKey.O, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => SetOverlay(!_overlay));
+    }
+
+    private void TogglePause()
+    {
+        if (_engine == null) return;
+        _engine.Paused = !_engine.Paused;
+        _status.Text = _engine.Paused ? "пауза" : _engine.Status;
     }
 
     private FrameworkElement BuildTitleBar()
@@ -181,8 +211,9 @@ public sealed class MainWindow : Window
         _bar.Content = content;
 
         _bar.PrimaryCommands.Add(Button("\uE713", "Настройки", ToggleSettings));
+        _bar.PrimaryCommands.Add(Button("\uE769", "Пауза", TogglePause));
         _bar.PrimaryCommands.Add(Button("\uE740", "Оверлей", () => SetOverlay(!_overlay)));
-        _bar.PrimaryCommands.Add(Button("\uE722", "Снимок", TakeScreenshot));
+        _bar.PrimaryCommands.Add(Button("\uE722", "Снимок", () => TakeScreenshot()));
         host.Children.Add(_bar);
     }
 
@@ -217,10 +248,8 @@ public sealed class MainWindow : Window
             _sourceCombo.SelectedIndex = _engine.Kind switch { "neural" => 0, "dsp" => 1, _ => 2 };
             _initialised = true;
             UpdateStatus();
-            _timer = DispatcherQueue.CreateTimer();
-            _timer.Interval = TimeSpan.FromMilliseconds(1000.0 / 144.0);
-            _timer.Tick += OnTick;
-            _timer.Start();
+            StartRenderThread();
+            StartUiTimer();
             if (_options.Overlay) SetOverlay(true);
         }
         catch (Exception ex)
@@ -250,53 +279,110 @@ public sealed class MainWindow : Window
         _swap.Ensure(w, h);
     }
 
-    // --------------------------------------------------------------- frame
-    private void OnTick(DispatcherQueueTimer sender, object args)
+    // --------------------------------------------------------- render thread
+    private void StartRenderThread()
     {
-        double now = _clock.Elapsed.TotalSeconds;
-        double dt = _lastTick > 0 ? Math.Min(0.1, now - _lastTick) : 1.0 / 60.0;
-        _lastTick = now;
-        if (_engine == null || _swap == null || _renderer == null) return;
-        var frame = _engine.Latest;
-        if (frame == null) return;
-        try
+        _renderRun = true;
+        var thread = new Thread(RenderLoop)
         {
-            var sw = Stopwatch.StartNew();
-            bool ok = _swap.Render(frame, _settings, now, dt);
+            IsBackground = true,
+            Name = "avis-render",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _renderThread = thread;
+        thread.Start();
+    }
+
+    /// <summary>Vsync-paced loop: Present(1, 0) blocks until the next refresh.</summary>
+    private void RenderLoop()
+    {
+        var sw = new Stopwatch();
+        while (_renderRun)
+        {
+            var swap = _swap;
+            var engine = _engine;
+            if (swap == null || engine == null) { Thread.Sleep(2); continue; }
+            var frame = engine.Latest;
+            if (frame == null) { Thread.Sleep(2); continue; }
+
+            double now = _clock.Elapsed.TotalSeconds;
+            double dt = _lastTick > 0 ? Math.Min(0.1, now - _lastTick) : 1.0 / 60.0;
+            _lastTick = now;
+
+            sw.Restart();
+            bool ok;
+            try
+            {
+                _iters++;
+                ok = swap.Render(frame, _settings, now, dt);
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                _renderRun = false;
+                _initError = ex.Message;
+                DispatcherQueue.TryEnqueue(() => _status.Text = "рендер: " + ex.Message);
+                return;
+            }
             sw.Stop();
-            if (ok)
+            if (!ok) continue;
+            if (_firstFrameSec == 0) _firstFrameSec = now;
+            lock (_statLock)
             {
                 _renderTimes.Add(sw.Elapsed.TotalMilliseconds);
+                _frameTimes.Add(dt * 1000.0);
                 if (_renderTimes.Count > 2400) _renderTimes.RemoveRange(0, 1200);
-                if (_lastTick > 0) { _frameTimes.Add(dt * 1000.0); if (_frameTimes.Count > 2400) _frameTimes.RemoveRange(0, 1200); }
+                if (_frameTimes.Count > 2400) _frameTimes.RemoveRange(0, 1200);
             }
         }
-        catch (Exception ex)
+    }
+
+    private void StopRenderThread()
+    {
+        _renderRun = false;
+        var thread = _renderThread;
+        _renderThread = null;
+        if (thread != null && thread.IsAlive && !thread.Join(2000))
         {
-            _initError = ex.Message;
-            _status.Text = "рендер: " + ex.Message;
-            _timer?.Stop();
-            return;
+            // Present() may stall while the window is minimising; the thread is a
+            // background thread, so leaving it alive at shutdown is safe.
         }
-        double up = now - _lastStats;
-        if (up >= 0.35)
+    }
+
+    // --------------------------------------------------------------- UI tick
+    private void StartUiTimer()
+    {
+        _uiTimer = DispatcherQueue.CreateTimer();
+        _uiTimer.Interval = TimeSpan.FromMilliseconds(100);
+        _uiTimer.Tick += (_, _) => OnUiTick();
+        _uiTimer.Start();
+    }
+
+    private void OnUiTick()
+    {
+        if (_engine == null || _initError != null) return;
+        double now = _clock.Elapsed.TotalSeconds;
+        double elapsed = _firstFrameSec > 0 ? now - _firstFrameSec : 0;
+        if (now - _lastStats >= 0.35)
         {
             _lastStats = now;
             UpdateStats(now);
         }
-        if (!_shotTaken && _options.Screenshot.Length > 0 && now >= _options.ScreenshotAt)
+        if (!_shotTaken && _options.Screenshot.Length > 0 && elapsed >= _options.ScreenshotAt)
         {
-            _shotTaken = true;
-            TakeScreenshot();
-            if (_options.Autoclose && _options.BenchSeconds <= 0) CloseSoon();
+            if (TakeScreenshot())
+            {
+                _shotTaken = true;
+                if (_options.Autoclose && _options.BenchSeconds <= 0) CloseSoon();
+            }
         }
-        if (_options.BenchSeconds > 0 && !_benchWritten && now >= _options.BenchSeconds)
+        if (_options.BenchSeconds > 0 && !_benchWritten && elapsed >= _options.BenchSeconds)
         {
             _benchWritten = true;
             WriteBench();
             if (_options.Autoclose) CloseSoon();
         }
-        else if (_options.Autoclose && _options.BenchSeconds <= 0 && _options.Screenshot.Length == 0 && now >= 1.2)
+        else if (_options.Autoclose && _options.BenchSeconds <= 0 && _options.Screenshot.Length == 0 && elapsed >= 1.2)
         {
             CloseSoon();
         }
@@ -304,14 +390,21 @@ public sealed class MainWindow : Window
 
     private void CloseSoon()
     {
-        _timer?.Stop();
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => Close());
+        _uiTimer?.Stop();
+        StopRenderThread();
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => Close());
     }
 
     private void UpdateStats(double now)
     {
-        double fps = _frameTimes.Count > 0 ? 1000.0 / Median(_frameTimes) : 0;
-        double rt = _renderTimes.Count > 0 ? Median(_renderTimes) : 0;
+        double[] frames, renders;
+        lock (_statLock)
+        {
+            frames = _frameTimes.ToArray();
+            renders = _renderTimes.ToArray();
+        }
+        double fps = frames.Length > 0 ? 1000.0 / Median(frames) : 0;
+        double rt = renders.Length > 0 ? Median(renders) : 0;
         var at = _engine?.AnalysisTimes() ?? Array.Empty<double>();
         double an = at.Length > 0 ? Median(at) : 0;
         _stats.Text = $"FPS {fps,5:0.0}   рендер {rt,5:1.0} мс   анализ {an,5:1.0} мс   объектов {_engine?.ObjectsAvg ?? 0:0.0}";
@@ -410,45 +503,69 @@ public sealed class MainWindow : Window
     }
 
     // ---------------------------------------------------------- screenshot
-    private void TakeScreenshot()
+    private bool TakeScreenshot()
     {
-        if (_renderer == null || _engine?.Latest == null) return;
+        if (_renderer == null || _swap == null) return false;
+        var frame = _engine?.Latest;
+        if (frame == null) return false;
         string path = _shotPending && _options.Screenshot.Length > 0
             ? _options.Screenshot
             : Path.Combine(AvisPaths.Root, "artifacts", "app", $"shot_{DateTime.Now:HHmmss}.png");
         _shotPending = false;
         try
         {
-            _renderer.Render(_engine.Latest, _settings, _clock.Elapsed.TotalSeconds, 1.0 / 60.0, null);
-            var rgba = _renderer.ReadPixels();
+            byte[] rgba;
+            lock (_swap.Sync)
+            {
+                _renderer.Render(frame, _settings, _clock.Elapsed.TotalSeconds, 1.0 / 60.0, null);
+                rgba = _renderer.ReadPixels();
+            }
             for (int i = 3; i < rgba.Length; i += 4) rgba[i] = 255; // premultiplied over black
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
             PngWriter.Write(Path.GetFullPath(path), _renderer.Width, _renderer.Height, rgba);
             _status.Text = "снимок: " + Path.GetFileName(path);
+            return true;
         }
-        catch (Exception ex) { _status.Text = "снимок: " + ex.Message; }
+        catch (Exception ex)
+        {
+            _status.Text = "снимок: " + ex.Message;
+            return false;
+        }
     }
 
     // --------------------------------------------------------------- bench
     private void WriteBench()
     {
         var at = _engine?.AnalysisTimes() ?? Array.Empty<double>();
-        var fps = _frameTimes.Select(ms => 1000.0 / ms).ToArray();
+        double[] frames, renders;
+        lock (_statLock)
+        {
+            frames = _frameTimes.ToArray();
+            renders = _renderTimes.ToArray();
+        }
+        var fps = frames.Select(ms => 1000.0 / ms).ToArray();
         var bench = new
         {
             source = _engine?.Kind ?? "?",
             seconds = _clock.Elapsed.TotalSeconds,
-            frames = _frameTimes.Count,
+            first_frame_sec = _firstFrameSec,
+            bench_seconds = _firstFrameSec > 0 ? _clock.Elapsed.TotalSeconds - _firstFrameSec : 0,
+            frames = frames.Length,
             fps_p50 = fps.Length > 0 ? Percent(fps, 50) : 0,
             fps_p05 = fps.Length > 0 ? Percent(fps, 5) : 0,
             fps_p95 = fps.Length > 0 ? Percent(fps, 95) : 0,
-            render_ms_p50 = _renderTimes.Count > 0 ? Percent(_renderTimes.ToArray(), 50) : 0,
-            render_ms_p95 = _renderTimes.Count > 0 ? Percent(_renderTimes.ToArray(), 95) : 0,
+            render_ms_p50 = renders.Length > 0 ? Percent(renders, 50) : 0,
+            render_ms_p95 = renders.Length > 0 ? Percent(renders, 95) : 0,
             analysis_ms_p50 = at.Length > 0 ? Percent(at, 50) : 0,
             analysis_ms_p99 = at.Length > 0 ? Percent(at, 99) : 0,
             objects_avg = _engine?.ObjectsAvg ?? 0,
             device = _renderer?.DeviceName ?? "?",
             resolution = _renderer == null ? "" : $"{_renderer.Width}x{_renderer.Height}",
+            iterations = _iters,
+            present_calls = _swap?.PresentCalls ?? 0,
+            present_ok = _swap?.PresentOk ?? 0,
+            present_occluded = _swap?.PresentOccluded ?? 0,
+            present_last_hr = _swap == null ? "" : "0x" + _swap.LastPresentResult.ToString("X8"),
             status = _engine?.Status ?? "",
         };
         string path = _options.BenchOut.Length > 0
@@ -479,7 +596,8 @@ public sealed class MainWindow : Window
 
     private void Shutdown()
     {
-        _timer?.Stop();
+        _uiTimer?.Stop();
+        StopRenderThread();
         try { _settings.Save(Path.Combine(AvisPaths.LocalAppData(), "settings.json")); } catch { }
         _swap?.Dispose();
         _renderer?.Dispose();
