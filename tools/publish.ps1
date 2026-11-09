@@ -29,7 +29,9 @@ if ($LASTEXITCODE -ne 0) { Get-Content $log -Tail 15; throw "publish failed" }
 Copy-Item -Recurse -Force (Join-Path $root 'shared') (Join-Path $dist 'shared')
 New-Item -ItemType Directory -Force -Path (Join-Path $dist 'models') | Out-Null
 Copy-Item -Recurse -Force $modelDir (Join-Path $dist "models\$Model")
-foreach ($doc in 'README.md', 'USER_GUIDE.md', 'ГОТОВО.txt') {
+# Copy user docs (ASCII names only: Windows PowerShell reads non-BOM scripts
+# as ANSI, and the start-prompt .txt in the root must not be published).
+foreach ($doc in 'README.md', 'USER_GUIDE.md', 'FINAL_REPORT.md') {
     $src = Join-Path $root $doc
     if (Test-Path $src) { Copy-Item -Force $src $dist }
 }
