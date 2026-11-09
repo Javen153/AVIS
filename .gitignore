@@ -20,3 +20,4 @@ tools/config.local.json
 ml/.pytest_cache/
 ml/.mypy_cache/
 dist/
+models/v1preview/
