@@ -79,7 +79,9 @@ public class TrackerTests
     {
         var tr = new ObjectTracker(Weights(), new TrackerConfig());
         AnalysisFrame? last = null;
-        for (int i = 0; i < 12; i++) last = Run(tr, i, Enumerable.Range(0, 8).ToArray(), Enumerable.Range(8, 8).ToArray());
+        // Clusters must not be directly adjacent: D-016 deliberately absorbs a group that
+        // spectrally touches a wide existing object. Two separate sources are ~1 octave apart.
+        for (int i = 0; i < 12; i++) last = Run(tr, i, Enumerable.Range(0, 8).ToArray(), Enumerable.Range(20, 8).ToArray());
         Assert.NotNull(last);
         Assert.Equal(2, last!.Objects.Count);
         Assert.Equal(2, last.Objects.Select(o => o.Id).Distinct().Count());

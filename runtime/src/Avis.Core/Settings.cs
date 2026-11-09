@@ -69,7 +69,8 @@ public sealed class AppSettings
 
     // --------------------------------------------------------------- tracking
     [Setting("tracking", "Трекинг", "Порог привязки", "cos(emb, centroid) для существующего объекта", Min = 0.3, Max = 0.95, Step = 0.01)]
-    public double MatchThreshold { get; set; } = 0.60;
+    public double MatchThreshold { get; set; } = 0.68;
+
 
     [Setting("tracking", "Трекинг", "Порог лидера", "cos для объединения полос в кандидата", Min = 0.3, Max = 0.95, Step = 0.01)]
     public double LeaderThreshold { get; set; } = 0.70;

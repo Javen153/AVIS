@@ -109,11 +109,12 @@ public static class ObjectParams
         double flat = nz > 0 ? Math.Exp(logSum / nz) / (sum / nz + 1e-20) : 1.0;
         float tonality = Math.Clamp(maxP * (float)(1.0 - flat), 0f, 1f);
 
-        // centroid and percentiles in log-frequency
+        // centroid and percentiles in log-frequency (5/95 keeps quiet but real
+        // spectral edges visible: white noise spans ~87 % of the axis, D-017)
         double le = 0, ee = 0;
         for (int k = 0; k < bands; k++) { le += e[k] * Math.Log(w.Fc[k]); ee += e[k]; }
         float centroid = ee > 1e-12 ? (float)Math.Exp(le / ee) : 0f;
-        double cum = 0, lowT = ee * 0.1, highT = ee * 0.9; float low = centroid, high = centroid;
+        double cum = 0, lowT = ee * 0.05, highT = ee * 0.95; float low = centroid, high = centroid;
         bool lowSet = false, highSet = false;
         for (int k = 0; k < bands; k++)
         {
