@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Avis.Audio/Avis.Audio.csproj" />
+    <Project Path="src/Avis.App/Avis.App.csproj" />
+    <Project Path="src/Avis.Cli/Avis.Cli.csproj" />
+    <Project Path="src/Avis.Core/Avis.Core.csproj" />
+    <Project Path="src/Avis.Render/Avis.Render.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Avis.Tests/Avis.Tests.csproj" />
+  </Folder>
+</Solution>
