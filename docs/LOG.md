@@ -57,4 +57,8 @@
   3.38 мс, скриншот и bench в `artifacts/dist`.
 - PNG-пресеты на S09 и процедурном миксе (`tools/make_demo_mix.py`) — в
   `artifacts/visual`; FINAL_REPORT.md и ГОТОВО.txt написаны.
+- Tiered JIT выключен в App и CLI: analysis p99 в приложении 44–100 → **4–11 мс**,
+  model infer p50 2.0 → **1.78–1.90**, total p99 **3.2–3.4** (D-022). Финальный
+  verify: 6 PASS, 2 ожидаемых FAIL (model p50, нейро 9/13), отчёт
+  `artifacts/verify/20261109-080640`; latency DSP 12.5 / neural 14.6 мс.
 
