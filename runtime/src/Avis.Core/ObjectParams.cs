@@ -45,16 +45,22 @@ public static class ObjectParams
         float loud = (float)(10.0 * Math.Log10(atotal + 1e-12));
         float presence = presenceOverride >= 0 ? presenceOverride : Math.Clamp((loud + 70f) / 20f, 0f, 1f);
 
-        // partial loudness: x^0.23 compression, subtract 30% of the rest
-        double partialSum = 0;
+        // Partial loudness (SPEC F): x^0.23 compression, subtract 30% of the rest.
+        // The compressed sum is sone-like; divide by the whole-frame sum before
+        // taking dB so the result stays on the same -70..0 dB axis as loudness
+        // (an object owning the whole spectrum gets partial == loud, D-021).
+        double partialSum = 0, totalSum = 0;
         for (int k = 0; k < bands; k++)
         {
             double nOwn = Math.Pow(Math.Max(e[k], 0), 0.23);
             double rest = Math.Max(f.PM[k] - e[k], 0);
             double nRest = Math.Pow(rest, 0.23);
             partialSum += Math.Max(0.0, nOwn - 0.3 * nRest);
+            totalSum += Math.Pow(Math.Max(f.PM[k], 0), 0.23);
         }
-        float partial = (float)(10.0 * Math.Log10(Math.Pow(partialSum, 1.0 / 0.23) + 1e-12));
+        float partial = totalSum > 1e-12
+            ? loud + (float)(10.0 / 0.23 * Math.Log10(Math.Max(partialSum, 1e-12) / totalSum))
+            : loud;
 
         // salience weighted by energy
         double sw = 0, sv = 0;
