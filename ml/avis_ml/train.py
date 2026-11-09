@@ -98,6 +98,8 @@ def main():
         print(f"[resume] step={start} best={best:.4f}", flush=True)
     scaler = torch.cuda.amp.GradScaler(enabled=(bool(cfg.get("amp", True)) and device.type == "cuda"))
     use_amp = scaler.is_enabled()
+    clip = float(cfg.get("clip", 5.0))
+    skip_loss = float(cfg.get("skip_loss", 25.0))
     csv_path = out_dir / "train.csv"
     new_csv = not csv_path.exists() or start == 0
     fcsv = open(csv_path, "w", newline="", encoding="utf-8") if new_csv else open(csv_path, "a", newline="", encoding="utf-8")
@@ -131,15 +133,21 @@ def main():
                 ls = compute_losses({k: (v.float() if torch.is_tensor(v) else v) for k, v in out.items()},
                                     active.float(), pitch.float(), sal.float(), dom)
                 loss = ls["loss"]
+        if float(loss) > skip_loss:
+            # A single pathological batch used to blow the weights up for thousands of
+            # steps; skipping the update keeps the run on track (see DECISIONS D-015).
+            print(f"[warn] skip step {step}: loss {float(loss):.1f} > {skip_loss:.0f}", flush=True)
+            opt.zero_grad(set_to_none=True)
+            continue
         if use_amp:
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip)
             scaler.step(opt)
             scaler.update()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip)
             opt.step()
         now = time.time()
         sps = now - last
