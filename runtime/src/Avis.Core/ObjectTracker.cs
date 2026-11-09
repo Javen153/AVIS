@@ -165,6 +165,21 @@ public sealed class ObjectTracker
                 if (Cos(emb[k], emb[lead]) >= _cfg.LeaderThreshold) { _group.Add(k); _visited.Add(k); }
             }
             var centroid = MeanEmb(emb, _group);
+            // do not spawn a second object inside the spectral region of an existing one:
+            // absorb the group and let the owner keep the bands (stops ghost re-birth churn)
+            int gLo = int.MaxValue, gHi = -1;
+            foreach (int k in _group) { if (k < gLo) gLo = k; if (k > gHi) gHi = k; }
+            int absorb = -1;
+            for (int i = 0; i < _active.Count && absorb < 0; i++)
+            {
+                if (_active[i].Fading) continue;
+                if (Touches(i, gLo, gHi)) absorb = i;
+            }
+            if (absorb >= 0)
+            {
+                foreach (int k in _group) { _owner[k] = absorb; _ownerW[k] = 1f; }
+                continue;
+            }
             Candidate? cand = null; float candCos = -2;
             foreach (var c in _candidates)
             {
@@ -263,6 +278,21 @@ public sealed class ObjectTracker
             {
                 obj.NoBands++;
                 if (obj.NoBands >= _cfg.FadeFrames) obj.Fading = true;
+            }
+        }
+
+        // 6a. merge spectrally co-located narrow objects: one source occupies one narrow
+        // region, so a quiet twin a few bands away is a ghost of the same peak.
+        for (int i = 0; i < _active.Count; i++)
+        {
+            for (int j = i + 1; j < _active.Count; j++)
+            {
+                if (!SpectralTwin(i, j, f)) continue;
+                int drop = BandLevel(i, f) >= BandLevel(j, f) ? j : i;
+                _active.RemoveAt(drop);
+                ReturnMembership(drop);
+                i = -1;
+                break;
             }
         }
 
@@ -368,8 +398,59 @@ public sealed class ObjectTracker
         _memPool.Add(a);
     }
 
-    private static bool HasPositive(float[] m)
+    /// <summary>True when the object owns a band adjacent to the [gLo, gHi] group.</summary>
+    private bool Touches(int owner, int gLo, int gHi)
     {
+        int a = Math.Max(0, gLo - 1), b = Math.Min(_owner.Length - 1, gHi + 1);
+        for (int k = a; k <= b; k++) if (_owner[k] == owner) return true;
+        return false;
+    }
+
+    private bool OwnedRange(int owner, out int lo, out int hi)
+    {
+        lo = int.MaxValue; hi = -1;
+        for (int k = 0; k < _owner.Length; k++)
+            if (_owner[k] == owner) { if (k < lo) lo = k; if (k > hi) hi = k; }
+        return hi >= 0;
+    }
+
+    /// <summary>Band span and mean level of an object's dominant membership.</summary>
+    private bool Span(int i, in FrontendFrame f, out float lo, out float hi, out double db)
+    {
+        lo = float.MaxValue; hi = 0; db = 0;
+        var m = _memberships[i];
+        int n = 0;
+        for (int k = 0; k < m.Length; k++)
+        {
+            if (m[k] < 0.34f) continue;
+            float fc = _w.Fc[k];
+            if (fc < lo) lo = fc;
+            if (fc > hi) hi = fc;
+            db += f.BandsDbM[k];
+            n++;
+        }
+        if (n == 0) { lo = hi = 0; return false; }
+        db /= n;
+        return true;
+    }
+
+    private double BandLevel(int i, in FrontendFrame f) => Span(i, f, out _, out _, out double db) ? db : -200;
+
+    private bool SpectralTwin(int i, int j, in FrontendFrame f)
+    {
+        if (!Span(i, f, out float loA, out float hiA, out _)) return false;
+        if (!Span(j, f, out float loB, out float hiB, out _)) return false;
+        if (loA <= 0 || loB <= 0 || hiA <= loA || hiB <= loB) return false;
+        double spanA = Math.Log2(hiA / loA), spanB = Math.Log2(hiB / loB);
+        // only narrow twins: a wide object already covers its region, wide ones must stay apart
+        if (spanA > 0.75 || spanB > 0.75) return false;
+        if (Math.Max(spanA, spanB) > 3.0 * Math.Min(spanA, spanB)) return false;
+        // and they must cover the same region of the spectrum
+        double overlap = Math.Log2(Math.Min(hiA, hiB) / Math.Max(loA, loB));
+        return overlap >= 0.7 * Math.Min(spanA, spanB);
+    }
+
+    private static bool HasPositive(float[] m)    {
         for (int i = 0; i < m.Length; i++) if (m[i] > 0) return true;
         return false;
     }
