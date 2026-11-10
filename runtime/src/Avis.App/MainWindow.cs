@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 using Avis.Core;
 using Avis.Render;
@@ -17,12 +17,14 @@ namespace Avis.App;
 
 public sealed class MainWindow : Window
 {
+    private const double TitleBarHeight = 32;
     private readonly AppOptions _options;
     private readonly AppSettings _settings;
     private readonly SwapChainPanel _panel = new();
     private readonly TextBlock _stats = new();
     private readonly TextBlock _status = new();
     private readonly CommandBar _bar = new();
+    private FrameworkElement? _titleBar;
     private ComboBox _sourceCombo = null!;
     private ScrollViewer _settingsView = null!;
     private Renderer? _renderer;
@@ -61,7 +63,7 @@ public sealed class MainWindow : Window
         try { SystemBackdrop = new MicaBackdrop(); } catch { }
         ExtendsContentIntoTitleBar = true;
         Content = BuildRoot();
-        SetTitleBar(BuildTitleBar());
+        SetTitleBar(_titleBar);
 
         Closed += (_, _) => Shutdown();
         Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) EnsureStarted(); };
@@ -80,6 +82,7 @@ public sealed class MainWindow : Window
     private FrameworkElement BuildRoot()
     {
         var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(TitleBarHeight) });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -108,7 +111,10 @@ public sealed class MainWindow : Window
         Grid.SetColumn(_settingsView, 1);
 
         root.Children.Add(body);
+        Grid.SetRow(body, 1);
         AddAccelerators(root);
+        _titleBar = BuildTitleBar();
+        root.Children.Insert(0, _titleBar);
         return root;
     }
 
@@ -136,7 +142,7 @@ public sealed class MainWindow : Window
 
     private FrameworkElement BuildTitleBar()
     {
-        var grid = new Grid { Height = 32, Padding = new Thickness(12, 0, 12, 0) };
+        var grid = new Grid { Height = TitleBarHeight, Padding = new Thickness(12, 0, 12, 0) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });

@@ -62,3 +62,25 @@
   verify: 6 PASS, 2 ожидаемых FAIL (model p50, нейро 9/13), отчёт
   `artifacts/verify/20261109-080640`; latency DSP 12.5 / neural 14.6 мс.
 
+## 2026-11-11 Исправлен вылет UI (0xC000027B) в собранном приложении
+- Воспроизведено: «Настройки»/`--settings` → `0xC000027B` в `Microsoft.UI.Xaml.dll`,
+  в `%LOCALAPPDATA%\AVIS\crash.log` — `Cannot find a Resource with the Name/Key
+  TabViewScrollButtonBackground`; `e.Handled = true` не спасает.
+- Причина 1: стили WinUI добавлялись из кода, без App.xaml. На Windows App SDK
+  2.6 такой merge падает внутри framework (`0x8000FFFF` на `Application.Resources`
+  либо `Cannot find a resource ... AcrylicBackgroundFillColorDefaultBrush` в
+  `XamlControlsResources`). Проверено на минимальном шаблоне: с App.xaml работает,
+  с merge из C# падает всегда.
+- Причина 2: `dotnet publish` не копировал `Avis.App.pri` в `dist\AVIS` — без PRI
+  не резолвятся `ms-appx:///Microsoft.UI.Xaml/Themes/...`, dist падал на старте.
+- Исправление: `App.xaml` + `InitializeComponent()`, `DISABLE_XAML_GENERATED_MAIN`
+  (свой `Main` в `Program.cs`), PRI-генерация включена, таргет `PublishPriIndex`
+  копирует PRI при публикации. Убран временный диагностический код (`Diag.cs`,
+  хуки `AVIS_PANEL_*`, `AVIS_APP_RES`, `AVIS_NO_GPU`); остался лог падений
+  `%LOCALAPPDATA%\AVIS\crash.log` и `UnhandledException`-обработчик.
+- Титулбар: элемент `SetTitleBar` теперь строка 0 корневого Grid (раньше был вне
+  дерева), кнопки CommandBar не перекрывают Minimize/Maximize/Close.
+- Проверка dist: `--settings` 3/3, реальные клики по 4 кнопкам CommandBar, 8
+  заголовков групп, 2 TextBox (фокус + ввод), 3 ComboBox, 30–45 с — без падений;
+  `--bench 3 --autoclose` код 0, FPS p50 180; `build.ps1 -Test` — xUnit 7/7;
+  `publish.ps1` — 298 МБ, `Avis.App.pri` на месте (D-023).

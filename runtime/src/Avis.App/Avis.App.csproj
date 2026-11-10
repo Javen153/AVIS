@@ -16,11 +16,11 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
-    <EnableDefaultWindowsAppSdkPRIResourceItems>false</EnableDefaultWindowsAppSdkPRIResourceItems>
     <!-- Realtime analysis: tiered JIT promotion showed up as 40-100 ms
          analysis stalls in a 3 s bench; full-quality JIT from the start (D-022). -->
     <TieredCompilation>false</TieredCompilation>
+    <!-- Program.cs provides Main; the XAML compiler would otherwise generate one. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
@@ -30,4 +30,14 @@
     <ProjectReference Include="..\Avis.Render\Avis.Render.csproj" />
     <ProjectReference Include="..\Avis.Audio\Avis.Audio.csproj" />
   </ItemGroup>
+  <!-- The build generates the PRI index (app resources + the WinUI resource maps
+       referenced by App.xaml) but the SDK does not copy it to the publish folder.
+       Without it WinUI cannot load the control styles and the app dies with
+       0xC000027B on the first themed control (D-023). -->
+  <Target Name="PublishPriIndex" AfterTargets="Publish"
+          Condition="'$(PublishDir)' != '' and Exists('$(TargetDir)$(AssemblyName).pri')">
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pri"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

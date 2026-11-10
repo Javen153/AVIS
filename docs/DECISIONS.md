@@ -179,3 +179,37 @@ PNG «Красивый» больше не обрезан сверху. Пров
 первый кадр 1.3–1.5 с. Бонусом CLI-бенч: infer p50 2.03 → **1.78–1.90**, total p99
 3.9 → **3.2–3.4** (один выброс 14 мс на фоновом ноутбуке). Цель 1.5 мс всё ещё
 не достигнута; жёсткий порог p99 таблицы теперь выполняется стабильно.
+
+## D-023. Вылет UI на 0xC000027B: тема WinUI грузится через App.xaml, PRI обязателен в dist
+Симптом: окно открывалось, но при нажатии «Настройки» (или `--settings`) процесс
+умирал с `0xC000027B` в `Microsoft.UI.Xaml.dll`; управляемое исключение не
+логировалось. В `%LOCALAPPDATA%\AVIS\crash.log` был только
+`XamlParseException: Cannot find a Resource with the Name/Key
+TabViewScrollButtonBackground`; `e.Handled = true` падение не отменяло.
+
+Причины (обе подтверждены экспериментом):
+1. В проекте не было App.xaml, и стили контролов (XamlControlsResources)
+   добавлялись из кода. На Windows App SDK 2.6 такой вариант падает внутри
+   framework: `COMException 0x8000FFFF` на `IApplication::get_Resources` или
+   `Cannot find a resource with the given key: AcrylicBackgroundFillColorDefaultBrush`
+   в конструкторе `XamlControlsResources`. Минимальный шаблонный проект с
+   App.xaml работает; тот же проект без App.xaml (merge из C#) падает всегда.
+2. `dotnet publish` не копировал `Avis.App.pri` в `dist\AVIS`. Без индекса PRI
+   не резолвится `ms-appx:///Microsoft.UI.Xaml/Themes/...`, поэтому собранный
+   dist падал на старте, хотя `bin` работал.
+
+Исправление: добавлен `App.xaml` с `XamlControlsResources`, `App` стал
+`partial` и вызывает `InitializeComponent()`; `Program.cs` остаётся точкой
+входа (`DISABLE_XAML_GENERATED_MAIN`); сняты `AppxGeneratePriEnabled=false` и
+`EnableDefaultWindowsAppSdkPRIResourceItems=false`; в csproj добавлен таргет
+`PublishPriIndex`, копирующий PRI в папку публикации. В App оставлен
+минимальный лог `%LOCALAPPDATA%\AVIS\crash.log` (пишется только на ошибках,
+обрезается после 256 КБ) и обработчик `UnhandledException` с `Handled = true`.
+Заодно починен титулбар: элемент для `SetTitleBar` не был в дереве (теперь это
+строка 0 корневого Grid), поэтому кнопки CommandBar больше не наезжают на
+Minimize/Maximize/Close.
+
+Проверка (dist, Release x64): `--settings` 3/3 без падений; реальные клики мышью
+по всем четырём кнопкам CommandBar, 8 заголовков групп, 2 TextBox (фокус + ввод),
+3 выпадающих списка, 30–45 с работы — без `crash.log`; `--bench 3 --autoclose`
+даёт FPS p50 180 и код 0; xUnit 7/7.

@@ -74,3 +74,15 @@
 - [x] Полный verify.ps1: 6 PASS, 2 ожидаемых FAIL (model p50, нейро 9/13)
 - [x] FINAL_REPORT.md + ГОТОВО.txt, всё закоммичено
 - [x] Тег p9
+
+## P10 Исправление вылета UI (после сдачи)
+- [x] Локальное воспроизведение `0xC000027B` при нажатии кнопок и на `--settings`
+- [x] Причина 1: стили WinUI (XamlControlsResources) нельзя мержить из кода на
+  Windows App SDK 2.6 — добавлен `App.xaml` + `InitializeComponent()` (D-023)
+- [x] Причина 2: `dotnet publish` не копировал `Avis.App.pri` — добавлен таргет
+  `PublishPriIndex`, PRI теперь в dist
+- [x] Титулбар: элемент `SetTitleBar` помещён в дерево (строка 0 корневого Grid)
+- [x] Удалена временная диагностика (`Diag.cs`, хуки `AVIS_PANEL_*`, `AVIS_APP_RES`,
+  `AVIS_NO_GPU`); оставлен `crash.log` + `UnhandledException`
+- [x] `build.ps1 -Test` 7/7, `publish.ps1` (298 МБ), клики по всем кнопкам,
+  группам настроек, TextBox и ComboBox на dist — без падений, `--bench 3` код 0
