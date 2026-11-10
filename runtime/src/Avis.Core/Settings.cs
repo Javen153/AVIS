@@ -30,7 +30,7 @@ public enum BrightnessSource { Loudness, Salience }
 public enum ChordMode { Elongated, PerNote }
 public enum HistoryMode { Off, Trails, Waterfall }
 public enum ColorMode { Palette, Timbre }
-public enum WindowMaterial { Mica, Acrylic }
+public enum WindowMaterial { Mica, Acrylic, Black }
 public enum DebugView { Main, Spectro, Masks, Table, Embedding }
 public enum InferenceProvider { Cpu, DirectML }
 
@@ -165,7 +165,7 @@ public sealed class AppSettings
     public double Opacity { get; set; } = 1.0;
 
     // ----------------------------------------------------------------- window
-    [Setting("window", "Окно", "Материал", "Mica или Acrylic")]
+    [Setting("window", "Окно", "Материал", "Mica, Acrylic или сплошной чёрный фон")]
     public WindowMaterial Material { get; set; } = WindowMaterial.Mica;
 
     [Setting("window", "Окно", "Поверх всех", "Держать окно сверху")]
@@ -193,6 +193,19 @@ public sealed class AppSettings
         JsonSerializer.Deserialize<AppSettings>(json, JsonOpts) ?? new AppSettings();
 
     public AppSettings Clone() => FromJson(ToJson());
+
+    /// <summary>Restores every <c>[Setting]</c> property to its compiled default.
+    /// Machine-specific plumbing (<see cref="BaseDirectory"/>, <see cref="ModelDirOverride"/>,
+    /// which carry no attribute) is left untouched.</summary>
+    public void ResetToDefaults()
+    {
+        var defaults = new AppSettings();
+        foreach (var (prop, _) in Describe())
+        {
+            var value = prop.GetValue(defaults);
+            if (value != null) prop.SetValue(this, value);
+        }
+    }
 
     public static readonly JsonSerializerOptions JsonOpts = new()
     {

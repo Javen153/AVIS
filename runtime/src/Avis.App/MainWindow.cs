@@ -24,6 +24,7 @@ public sealed class MainWindow : Window
     private readonly TextBlock _stats = new();
     private readonly TextBlock _status = new();
     private readonly CommandBar _bar = new();
+    private Grid? _root;
     private FrameworkElement? _titleBar;
     private ComboBox _sourceCombo = null!;
     private ScrollViewer _settingsView = null!;
@@ -60,10 +61,10 @@ public sealed class MainWindow : Window
         if (options.Overlay) _settings.Overlay = true;
         if (options.Topmost) _settings.AlwaysOnTop = true;
 
-        try { SystemBackdrop = new MicaBackdrop(); } catch { }
         ExtendsContentIntoTitleBar = true;
         Content = BuildRoot();
         SetTitleBar(_titleBar);
+        ApplyMaterial();
 
         Closed += (_, _) => Shutdown();
         Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) EnsureStarted(); };
@@ -82,6 +83,7 @@ public sealed class MainWindow : Window
     private FrameworkElement BuildRoot()
     {
         var root = new Grid();
+        _root = root;
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(TitleBarHeight) });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var body = new Grid();
@@ -104,7 +106,7 @@ public sealed class MainWindow : Window
         body.Children.Add(_stats);
 
         _shotPending = _options.Screenshot.Length > 0;
-        _settingsView = SettingsPanel.Build(_settings, OnSettingsChanged);
+        _settingsView = SettingsPanel.Build(_settings, OnSettingsChanged, ResetSettings);
         _settingsView.Width = 360;
         _settingsView.Visibility = _options.ShowSettings ? Visibility.Visible : Visibility.Collapsed;
         body.Children.Add(_settingsView);
@@ -211,22 +213,25 @@ public sealed class MainWindow : Window
             p.ModelDirOverride = _settings.ModelDirOverride;
             ApplyPreset(p);
         };
+        ToolTipService.SetToolTip(_sourceCombo, "Источник объектов: нейросеть, DSP или тестовый генератор");
+        ToolTipService.SetToolTip(presets, "Готовый набор настроек: «Точный», «Красивый» или «Отладка»");
         content.Children.Add(label);
         content.Children.Add(_sourceCombo);
         content.Children.Add(presets);
         _bar.Content = content;
 
-        _bar.PrimaryCommands.Add(Button("\uE713", "Настройки", ToggleSettings));
-        _bar.PrimaryCommands.Add(Button("\uE769", "Пауза", TogglePause));
-        _bar.PrimaryCommands.Add(Button("\uE740", "Оверлей", () => SetOverlay(!_overlay)));
-        _bar.PrimaryCommands.Add(Button("\uE722", "Снимок", () => TakeScreenshot()));
+        _bar.PrimaryCommands.Add(Button("\uE713", "Настройки", "Показать или скрыть панель настроек", ToggleSettings));
+        _bar.PrimaryCommands.Add(Button("\uE769", "Пауза", "Пауза и продолжение анализа (пробел)", TogglePause));
+        _bar.PrimaryCommands.Add(Button("\uE740", "Оверлей", "Полноэкранный режим без рамки (F11, Ctrl+Shift+O)", () => SetOverlay(!_overlay)));
+        _bar.PrimaryCommands.Add(Button("\uE722", "Снимок", "Сохранить PNG-снимок кадра (F12)", () => TakeScreenshot()));
         host.Children.Add(_bar);
     }
 
-    private static AppBarButton Button(string glyph, string label, Action action)
+    private static AppBarButton Button(string glyph, string label, string tip, Action action)
     {
         var b = new AppBarButton { Icon = new FontIcon { Glyph = glyph }, Label = label };
         b.Click += (_, _) => action();
+        ToolTipService.SetToolTip(b, tip);
         return b;
     }
 
@@ -452,18 +457,30 @@ public sealed class MainWindow : Window
             var value = prop.GetValue(preset);
             if (value != null) prop.SetValue(_settings, value);
         }
-        // rebuild the panel so controls show the preset values
-        var parent = _settingsView.Parent as Grid;
-        if (parent != null)
-        {
-            int index = parent.Children.IndexOf(_settingsView);
-            parent.Children.Remove(_settingsView);
-            _settingsView = SettingsPanel.Build(_settings, OnSettingsChanged);
-            _settingsView.Width = 360;
-            parent.Children.Insert(index, _settingsView);
-            Grid.SetColumn(_settingsView, 1);
-        }
+        RebuildSettingsPanel();
         OnSettingsChanged();
+    }
+
+    private void ResetSettings()
+    {
+        _settings.ResetToDefaults();
+        RebuildSettingsPanel();
+        OnSettingsChanged();
+        _status.Text = "настройки по умолчанию";
+    }
+
+    /// <summary>Rebuilds the panel so every control shows the current settings values.</summary>
+    private void RebuildSettingsPanel()
+    {
+        if (_settingsView.Parent is not Grid parent) return;
+        var visibility = _settingsView.Visibility;
+        int index = parent.Children.IndexOf(_settingsView);
+        parent.Children.Remove(_settingsView);
+        _settingsView = SettingsPanel.Build(_settings, OnSettingsChanged, ResetSettings);
+        _settingsView.Width = 360;
+        _settingsView.Visibility = visibility;
+        parent.Children.Insert(index, _settingsView);
+        Grid.SetColumn(_settingsView, 1);
     }
 
     private void StartRecording()
@@ -475,10 +492,32 @@ public sealed class MainWindow : Window
 
     private void ApplyBackdropSettings()
     {
-        try { SystemBackdrop = _settings.Material == WindowMaterial.Acrylic ? new DesktopAcrylicBackdrop() : new MicaBackdrop(); }
-        catch { }
+        ApplyMaterial();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         Win32.SetTopmost(hwnd, _settings.AlwaysOnTop && !_overlay);
+    }
+
+    /// <summary>Applies the window material. <see cref="WindowMaterial.Black"/> drops the
+    /// system backdrop and paints the root grid solid black, so the premultiplied swap
+    /// chain composites over true black instead of the Mica-tinted desktop.</summary>
+    private void ApplyMaterial()
+    {
+        try
+        {
+            SystemBackdrop = _settings.Material switch
+            {
+                WindowMaterial.Acrylic => new DesktopAcrylicBackdrop(),
+                WindowMaterial.Mica => new MicaBackdrop(),
+                _ => null,
+            };
+        }
+        catch { }
+        if (_root != null)
+        {
+            _root.Background = _settings.Material == WindowMaterial.Black
+                ? new SolidColorBrush(Colors.Black)
+                : null;
+        }
     }
 
     // ------------------------------------------------------------ overlay
