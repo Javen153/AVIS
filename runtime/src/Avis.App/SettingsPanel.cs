@@ -1,4 +1,7 @@
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using Avis.Core;
@@ -133,6 +136,29 @@ public static class SettingsPanel
             ToolTipService.SetToolTip(combo, tip);
             panel.Children.Add(combo);
         }
+        else if (t == typeof(string) && attr.Choices is { Length: > 0 })
+        {
+            var current = prop.GetValue(settings)?.ToString() ?? "";
+            var items = ModelChoices(attr.Choices, current);
+            var combo = new ComboBox
+            {
+                Header = attr.Label,
+                ItemsSource = items,
+                SelectedIndex = Math.Max(0, items.IndexOf(current)),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is string s && s != current)
+                {
+                    prop.SetValue(settings, s);
+                    current = s;
+                    changed();
+                }
+            };
+            ToolTipService.SetToolTip(combo, tip);
+            panel.Children.Add(combo);
+        }
         else
         {
             var box = new TextBox
@@ -146,6 +172,33 @@ public static class SettingsPanel
             panel.Children.Add(box);
         }
         return panel;
+    }
+
+    /// <summary>Declared versions first (v1, v2.1), then every exported model found in /models.</summary>
+    private static List<string> ModelChoices(IEnumerable<string> declared, string? current)
+    {
+        var items = new List<string>(declared);
+        void Add(string? name)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && !items.Contains(name)) items.Add(name);
+        }
+        try
+        {
+            if (Directory.Exists(AvisPaths.Models))
+            {
+                var found = Directory.GetDirectories(AvisPaths.Models)
+                    .Where(d => File.Exists(Path.Combine(d, "model.onnx")))
+                    .Select(d => Path.GetFileName(d))
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
+                foreach (var name in found) Add(name);
+            }
+        }
+        catch
+        {
+            // A missing or unreadable models folder must not break the settings panel.
+        }
+        Add(current);
+        return items;
     }
 
     /// <summary>Two-line tooltip: the short description, then the range/default hint.</summary>

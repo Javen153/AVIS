@@ -18,6 +18,8 @@ public sealed class SettingAttribute : Attribute
     public double Min { get; set; } = 0;
     public double Max { get; set; } = 1;
     public double Step { get; set; } = 0.01;
+    /// <summary>Suggested values for a string setting; the UI renders a drop-down.</summary>
+    public string[]? Choices { get; set; }
     public SettingAttribute(string group, string groupLabel, string label, string description)
     {
         Group = group; GroupLabel = groupLabel; Label = label; Description = description;
@@ -55,7 +57,8 @@ public sealed class AppSettings
     public double FMax { get; set; } = 16000;
 
     // ---------------------------------------------------------------- neural
-    [Setting("neural", "Нейросеть", "Модель", "Папка модели в /models")]
+    [Setting("neural", "Нейросеть", "Модель", "Версия модели из папки /models",
+        Choices = new[] { "v1", "v2.1" })]
     public string ModelName { get; set; } = "v1";
 
     [Setting("neural", "Нейросеть", "Провайдер", "CPU надёжнее; DirectML быстрее на GPU")]

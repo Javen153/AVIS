@@ -15,7 +15,7 @@ public sealed class NeuralObjectSource : IObjectSource
     private readonly FrontendWeights _w;
     private readonly InferenceSession _session;
     private readonly ObjectTracker _tracker;
-    private readonly float[] _h = new float[2 * 384];
+    private readonly float[] _h;
     private readonly float[] _feat = new float[3 * 192];
     private readonly DenseTensor<float> _featTensor;
     private readonly DenseTensor<float> _hTensor;
@@ -30,6 +30,20 @@ public sealed class NeuralObjectSource : IObjectSource
     public string ModelVersion { get; } = "?";
     public string Provider { get; private set; } = "cpu";
     public double LastInferenceMs { get; private set; }
+
+    private static int[] StateShape(InferenceSession session)
+    {
+        // take the hidden-state shape from the ONNX graph itself: model.json is
+        // optional metadata and a silent 384 fallback would only surface later as
+        // a shape error at Run() time (D-037)
+        if (session.InputMetadata.TryGetValue("h_in", out var meta))
+        {
+            var dims = meta.Dimensions;
+            if (dims is { Length: 3 } && dims.All(d => d > 0)) return dims;
+        }
+        throw new InvalidOperationException(
+            "model.onnx has no usable 'h_in' input shape (expected [2,1,H])");
+    }
 
     public NeuralObjectSource(FrontendWeights w, string modelDir, AppSettings settings)
     {
@@ -49,8 +63,12 @@ public sealed class NeuralObjectSource : IObjectSource
             catch { Provider = "cpu"; }
         }
         _session = new InferenceSession(onnx, opts);
+        int[] hShape;
+        try { hShape = StateShape(_session); }
+        catch { _session.Dispose(); throw; }
+        _h = new float[hShape.Aggregate(1, (x, y) => x * y)];
         _featTensor = new DenseTensor<float>(_feat, new[] { 1, 3, 192 });
-        _hTensor = new DenseTensor<float>(_h, new[] { 2, 1, 384 });
+        _hTensor = new DenseTensor<float>(_h, hShape);
         _inputs = new List<NamedOnnxValue>
         {
             NamedOnnxValue.CreateFromTensor("feat", _featTensor),
