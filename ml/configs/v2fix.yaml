@@ -1,0 +1,31 @@
+tag: v2fix
+# P13 / D-034: one retry after the Slakh label audit. v1 anchor, 50/50 procedural/real,
+# 4000 steps. Speed-augmented pitch labels are now time-warped with the audio (mixer_v2).
+init_from: models/v2/ckpt_v1init.pt
+steps: 4000
+batch_size: 8
+lr: 6.0e-5
+wd: 1.0e-4
+warmup: 200
+seconds: 4.0
+max_sources: 8
+amp: true
+clip: 1.0
+skip_loss: 25.0
+val_batch: 6
+log_every: 20
+ckpt_every: 2000
+
+# real data: 50 % procedural examples, 50 % mixed real stems (D-034)
+real: true
+proc_share: 0.5
+real_workers: 4
+real_batch: 16
+val_real_batches: 6
+
+# stability: roll back to ckpt_best and halve lr (D-018/D-029). Val noise std 0.18-0.32
+# (D-032); one bad point must not trigger a rollback.
+auto_recover: 20
+patience_val: 2
+val_seed: 777
+val_tol: 0.10

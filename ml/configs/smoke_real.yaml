@@ -1,0 +1,18 @@
+tag: smoke_real
+steps: 300
+batch_size: 8
+lr: 1.0e-3
+wd: 1.0e-4
+warmup: 50
+seconds: 4.0
+max_sources: 8
+amp: true
+val_batch: 4
+log_every: 10
+ckpt_every: 150
+
+# smoke over the real+procedural mixer (D-025)
+real: true
+real_workers: 2
+real_batch: 8
+val_real_batches: 2

@@ -1,0 +1,32 @@
+tag: v2ft
+# Fine-tune v1 (converted from the shipped ONNX, see D-032) on real stems.
+# Rationale: training v2 from scratch diverged from the real data (D-029/D-031);
+# a converged v1 anchor plus a small lr keeps the representation (scenarios 9/13) and
+# lets the real batches move it.
+init_from: models/v2/ckpt_v1init.pt
+steps: 4000
+batch_size: 8
+lr: 6.0e-5
+wd: 1.0e-4
+warmup: 200
+seconds: 4.0
+max_sources: 8
+amp: true
+clip: 1.0
+skip_loss: 25.0
+val_batch: 6
+log_every: 20
+ckpt_every: 500
+
+# real data (MUSDB stems + Slakh stems) mixed with procedural sources, D-025
+real: true
+real_workers: 4
+real_batch: 16
+val_real_batches: 6
+
+# stability: roll back to ckpt_best and halve lr (D-018/D-029). Val noise across batches is
+# std 0.18-0.32 (D-032), so one bad point must not trigger a rollback.
+auto_recover: 20
+patience_val: 2
+val_seed: 777
+val_tol: 0.05

@@ -33,11 +33,14 @@ def kmeans(x, k, iters=25):
     return lab
 
 
-def eval_batch(out, active, dom, pitch, pred_pitch, pred_act):
+def eval_batch(out, active, dom, pitch, pred_pitch, pred_act, pitch_mask=None):
     emb = out["emb"].cpu().numpy()
     act = active.cpu().numpy()
     dom = dom.cpu().numpy()
     B, T, F, D = emb.shape
+    if pitch_mask is None:
+        pitch_mask = torch.ones(B, T, device=active.device)
+    pm = pitch_mask.cpu().numpy() > 0.5
     correct = total = 0
     p_tp = p_fp = p_fn = 0
     act_tp = act_fp = act_fn = 0
@@ -63,18 +66,19 @@ def eval_batch(out, active, dom, pitch, pred_pitch, pred_act):
             correct += int((pred == y).sum())
             total += len(y)
             # pitch: local maxima above 0.5 vs gaussian truth
-            pp = pred_pitch[b, t].cpu().numpy()
-            tp = pitch[b, t].cpu().numpy()
-            pk = [i for i in range(1, F - 1) if pp[i] > 0.5 and pp[i] >= pp[i - 1] and pp[i] > pp[i + 1]]
-            truek = [i for i in range(1, F - 1) if tp[i] > 0.5 and tp[i] >= tp[i - 1] and tp[i] > tp[i + 1]]
-            used = set()
-            for i in pk:
-                hit = [j for j in truek if abs(i - j) <= 1 and j not in used]
-                if hit:
-                    p_tp += 1; used.add(hit[0])
-                else:
-                    p_fp += 1
-            p_fn += len(truek) - len(used)
+            if pm[b, t]:
+                pp = pred_pitch[b, t].cpu().numpy()
+                tp = pitch[b, t].cpu().numpy()
+                pk = [i for i in range(1, F - 1) if pp[i] > 0.5 and pp[i] >= pp[i - 1] and pp[i] > pp[i + 1]]
+                truek = [i for i in range(1, F - 1) if tp[i] > 0.5 and tp[i] >= tp[i - 1] and tp[i] > tp[i + 1]]
+                used = set()
+                for i in pk:
+                    hit = [j for j in truek if abs(i - j) <= 1 and j not in used]
+                    if hit:
+                        p_tp += 1; used.add(hit[0])
+                    else:
+                        p_fp += 1
+                p_fn += len(truek) - len(used)
             pa = pred_act[b, t].cpu().numpy() > 0.5
             act_tp += int((pa & m).sum()); act_fp += int((pa & ~m).sum()); act_fn += int((~pa & m).sum())
     cell = correct / max(total, 1)
@@ -94,16 +98,19 @@ def main():
     a = ap.parse_args()
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
-    net = AvisNet(); net.load_state_dict(ck["model"]); net.eval().to(dev)
+    hid = int(ck.get("config", {}).get("hid", 384))
+    net = AvisNet(hid=hid); net.load_state_dict(ck["model"]); net.eval().to(dev)
     tf = TorchFrontend(REPO / "shared" / "frontend" / "v1" / "weights.bin", dev)
     mixer = ProceduralMixer(MixConfig(seconds=float(ck.get("config", {}).get("seconds", 4.0))), dev)
     acc = {}
     with torch.no_grad():
         for i in range(a.batches):
             b = mixer.batch(2, seed=500 + i)
-            feat, active, pitch, sal, dom = make_labels(b["mix"], b["dom"], b["pitch"], b["sal"], tf)
-            out = net(feat)
-            r = eval_batch(out, active, dom, pitch, out["pitch"], out["act"])
+            lab = make_labels(b["mix"], b["dom"], b["pitch"], b["sal"], tf,
+                              margin=b.get("margin"), pitch_mask=b.get("pitch_mask"))
+            out = net(lab["feat"])
+            r = eval_batch(out, lab["active"], lab["dom"], lab["pitch"], out["pitch"],
+                           out["act"], lab["pitch_mask"])
             for k, v in r.items():
                 acc.setdefault(k, []).append(v)
     res = {k: float(np.mean(v)) for k, v in acc.items()}

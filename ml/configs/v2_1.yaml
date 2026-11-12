@@ -1,0 +1,49 @@
+tag: v2.1
+# P14: from scratch (no v1 init), per-head pitch pos-weight BCE, weighted DC,
+# masked labels, EMA and composite checkpoint selection. 280 hidden units
+# -> 2.99 M params.
+hid: 280
+steps: 8000
+batch_size: 8
+lr: 1.0e-3
+wd: 1.0e-4
+warmup: 1000
+seconds: 4.0
+max_sources: 8
+amp: true
+clip: 1.0
+skip_loss: 25.0
+seed: 0
+
+# Stage A: procedural only, then 25% -> 50% real examples
+real: true
+stage_a_steps: 1500
+proc_share_start: 0.75
+proc_share_end: 0.50
+real_workers: 4
+real_batch: 16
+mix_distort_p: 0.5
+
+# fixed validation (>= 200 examples total, identical in every process)
+val_batch: 8
+val_proc_examples: 120
+val_real_examples: 120
+val_seed: 777
+val_cell_acc: true
+# 2 sigma rollback threshold; measured batch noise is written to val.json
+val_noise: 0.03
+
+# losses
+pitch_loss: pos_weight
+pitch_pos_weight_max: 20.0
+uncertainty: true
+log_var_init: [0.0, 0.0, 0.0, 0.0]
+dc_margin_db: 3.0
+
+# optimisation / protocol
+ema_decay: 0.999
+log_every: 20
+ckpt_every: 1000
+auto_recover: 20
+patience_val: 2
+early_stop: 3

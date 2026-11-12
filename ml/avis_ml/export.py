@@ -19,6 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 
 
+def _build_net(cfg):
+    hid = int(cfg.get("hid", 384))
+    if cfg.get("arch", "v2") == "v3":
+        from .model_v3 import AvisNetV3, StepWrapperV3
+        return AvisNetV3(hid=hid).eval(), StepWrapperV3, hid
+    return AvisNet(hid=hid).eval(), StepWrapper, hid
+
+
 def git_commit():
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
@@ -33,9 +41,10 @@ def compute_pca(net, tf, mixer, device, frames=1200):
     with torch.no_grad():
         for i in range(4):
             b = mixer.batch(4, seed=900 + i)
-            feat, active, pitch, sal, dom = make_labels(b["mix"], b["dom"], b["pitch"], b["sal"], tf)
-            out = net(feat)
-            e = out["emb"][active > 0.5].float().cpu().numpy()
+            lab = make_labels(b["mix"], b["dom"], b["pitch"], b["sal"], tf,
+                              margin=b.get("margin"), pitch_mask=b.get("pitch_mask"))
+            out = net(lab["feat"])
+            e = out["emb"][lab["active"] > 0.5].float().cpu().numpy()
             embs.append(e)
     X = np.concatenate(embs, axis=0)
     mean = X.mean(axis=0)
@@ -45,19 +54,22 @@ def compute_pca(net, tf, mixer, device, frames=1200):
     return {"mean": mean.tolist(), "components": comps.tolist(), "n": int(X.shape[0])}
 
 
-def export(ckpt_path, out_dir, device="cuda", skip_parity=False):
+def export(ckpt_path, out_dir, device="cuda", skip_parity=False, golden_out=None):
     device = torch.device(device if torch.cuda.is_available() else "cpu")
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg = ck.get("config", {})
-    net = AvisNet()
-    net.load_state_dict(ck["model"])
+    net, wrapper_cls, hid = _build_net(cfg)
+    # prefer EMA weights: ckpt_best stores them in "model", ckpt_last keeps raw
+    # weights in "model" and EMA in "ema" (D-037)
+    state = ck.get("ema") or ck["model"]
+    net.load_state_dict(state)
     net.eval().to(device)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    wrapper = StepWrapper(net).eval()
+    wrapper = wrapper_cls(net).eval()
     feat = torch.randn(1, 3, 192, device=device)
-    h = torch.zeros(2, 1, 384, device=device)
+    h = torch.zeros(2, 1, hid, device=device)
     onnx_path = out / "model.onnx"
     torch.onnx.export(
         wrapper, (feat, h), str(onnx_path),
@@ -76,9 +88,10 @@ def export(ckpt_path, out_dir, device="cuda", skip_parity=False):
         sess = ort.InferenceSession(str(onnx_path), opts, providers=["CPUExecutionProvider"])
         rng = np.random.default_rng(5)
         xs = torch.from_numpy(rng.standard_normal((300, 3, 192)).astype(np.float32)).to(device)
-        h_t = torch.zeros(2, 1, 384, device=device)
-        h_o = np.zeros((2, 1, 384), dtype=np.float32)
+        h_t = torch.zeros(2, 1, hid, device=device)
+        h_o = np.zeros((2, 1, hid), dtype=np.float32)
         diffs = []
+        hdiffs = []
         t0 = time.time()
         with torch.no_grad():
             for i in range(300):
@@ -86,25 +99,27 @@ def export(ckpt_path, out_dir, device="cuda", skip_parity=False):
                 emb_t, act_t, pit_t, sal_t, h_t = net.step(f, h_t)
                 emb_o, act_o, pit_o, sal_o, h_o = sess.run(None, {
                     "feat": f.cpu().numpy(), "h_in": h_o})
-                diffs.append(max(float((emb_t.cpu().numpy() - emb_o).max()),
-                                 float((act_t.cpu().numpy() - act_o).max()),
-                                 float((pit_t.cpu().numpy() - pit_o).max()),
-                                 float((sal_t.cpu().numpy() - sal_o).max())))
+                diffs.append(max(float(np.abs(emb_t.cpu().numpy() - emb_o).max()),
+                                 float(np.abs(act_t.cpu().numpy() - act_o).max()),
+                                 float(np.abs(pit_t.cpu().numpy() - pit_o).max()),
+                                 float(np.abs(sal_t.cpu().numpy() - sal_o).max())))
+                hdiffs.append(float(np.abs(h_t.cpu().numpy() - h_o).max()))
         parity.update({"max_abs": max(diffs), "mean_abs": float(np.mean(diffs)),
+                       "max_abs_h": max(hdiffs),
                        "ms_per_frame": (time.time() - t0) / 300 * 1000})
         print("onnx parity:", parity, flush=True)
 
     # save C# golden model io (first 300 random frames, deterministic)
     rng = np.random.default_rng(77)
     gx = rng.standard_normal((300, 3, 192)).astype(np.float32) * 0.5
-    h_t = torch.zeros(2, 1, 384, device=device)
+    h_t = torch.zeros(2, 1, hid, device=device)
     embs, acts, pits, sals = [], [], [], []
     with torch.no_grad():
         for i in range(300):
             e, a, p, s, h_t = net.step(torch.from_numpy(gx[i:i + 1]).to(device), h_t)
             embs.append(e.cpu().numpy()); acts.append(a.cpu().numpy())
             pits.append(p.cpu().numpy()); sals.append(s.cpu().numpy())
-    g = REPO / "shared" / "golden" / "model"
+    g = Path(golden_out) if golden_out else (REPO / "shared" / "golden" / "model")
     g.mkdir(parents=True, exist_ok=True)
     gx.tofile(g / "input.f32")
     np.concatenate(embs).astype("<f4").tofile(g / "expected_emb.f32")
@@ -112,26 +127,27 @@ def export(ckpt_path, out_dir, device="cuda", skip_parity=False):
     np.concatenate(pits).astype("<f4").tofile(g / "expected_pitch.f32")
     np.concatenate(sals).astype("<f4").tofile(g / "expected_sal.f32")
     (g / "meta.json").write_text(json.dumps({"frames": 300, "bands": 192, "emb": 20,
-                                             "h_layers": 2, "h_size": 384}, indent=1), encoding="utf-8")
+                                             "h_layers": 2, "h_size": hid}, indent=1), encoding="utf-8")
 
     tf = TorchFrontend(REPO / "shared" / "frontend" / "v1" / "weights.bin", device=device)
     mixer = ProceduralMixer(MixConfig(seconds=4.0, max_sources=8), device=device)
     pca = compute_pca(net, tf, mixer, device)
     model_json = {
         "version": out.name,
+        "arch": cfg.get("arch", "v2"),
         "created": datetime.now(timezone.utc).isoformat(),
         "git_commit": git_commit(),
         "frontend_version": "FE-v1",
         "inputs": [
             {"name": "feat", "shape": [1, 3, 192], "dtype": "float32"},
-            {"name": "h_in", "shape": [2, 1, 384], "dtype": "float32"},
+            {"name": "h_in", "shape": [2, 1, hid], "dtype": "float32"},
         ],
         "outputs": [
             {"name": "emb", "shape": [1, 192, 20], "dtype": "float32"},
             {"name": "act", "shape": [1, 192], "dtype": "float32"},
             {"name": "pitch", "shape": [1, 192], "dtype": "float32"},
             {"name": "sal", "shape": [1, 192], "dtype": "float32"},
-            {"name": "h_out", "shape": [2, 1, 384], "dtype": "float32"},
+            {"name": "h_out", "shape": [2, 1, hid], "dtype": "float32"},
         ],
         "color_pca": pca,
         "metrics": {"onnx_parity": parity, "train_step": ck.get("step"), "best_val": ck.get("best")},
@@ -151,5 +167,7 @@ if __name__ == "__main__":
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--skip-parity", action="store_true")
+    ap.add_argument("--golden-out", default="",
+                    help="where to write C# golden model IO (default shared/golden/model)")
     a = ap.parse_args()
-    export(a.ckpt, a.out, a.device, a.skip_parity)
+    export(a.ckpt, a.out, a.device, a.skip_parity, a.golden_out or None)

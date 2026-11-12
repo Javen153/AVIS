@@ -1,0 +1,26 @@
+tag: v2
+steps: 16000
+batch_size: 8
+lr: 2.5e-4
+wd: 1.0e-4
+warmup: 1000
+seconds: 4.0
+max_sources: 8
+amp: true
+clip: 1.0
+skip_loss: 25.0
+val_batch: 4
+log_every: 20
+ckpt_every: 2000
+
+# real data (MUSDB stems + Slakh stems) mixed with procedural sources, D-025
+real: true
+real_workers: 4
+real_batch: 16
+val_real_batches: 4
+
+# stability: roll back to ckpt_best and halve lr (D-018) instead of training blind
+auto_recover: 20
+patience_val: 1
+val_seed: 777
+val_tol: 0.02

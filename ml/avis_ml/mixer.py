@@ -67,6 +67,11 @@ class ProceduralMixer:
     def _rand(self, shape, lo=0.0, hi=1.0):
         return lo + (hi - lo) * torch.rand(shape, device=self.device, generator=self.g)
 
+    def _cumsum(self, x):
+        # CUDA prefix scan is not bit-identical between runs (split-k rounding),
+        # CPU scan is: reproducible val sets must match exactly (D-030).
+        return torch.cumsum(x.detach().cpu(), 0).to(self.device)
+
     def _env(self, gain, attack, dur, release):
         n = self.n
         t = self.time
@@ -80,7 +85,7 @@ class ProceduralMixer:
         vibc = float(self._rand((), 0, vib)) * (1 if timbre in ("vocal_lead", "vocal_back", "synth_lead", "strings") else 0.3)
         rate = float(self._rand((), 3.5, 6.5))
         f = f0 * torch.pow(torch.tensor(2.0, device=self.device), vibc * torch.sin(2 * math.pi * rate * t) / 1200.0)
-        phase = 2 * math.pi * torch.cumsum(f, 0) / self.cfg.sr
+        phase = 2 * math.pi * self._cumsum(f) / self.cfg.sr
         out = torch.zeros_like(t)
         nmax = 1
         while nmax < nh and f0 * (nmax + 1) < 12000:
@@ -140,7 +145,7 @@ class ProceduralMixer:
         t = self.time
         if kind == "kick":
             f = 150 * torch.exp(-t * 18) + 45
-            y = torch.sin(2 * math.pi * torch.cumsum(f, 0) / self.cfg.sr) * torch.exp(-t * 7)
+            y = torch.sin(2 * math.pi * self._cumsum(f) / self.cfg.sr) * torch.exp(-t * 7)
             y += torch.randn(self.n, device=self.device, generator=self.g) * torch.exp(-t * 90) * 0.3
             return y / (y.abs().max() + 1e-9)
         if kind == "snare":
@@ -162,7 +167,7 @@ class ProceduralMixer:
             return y / (y.abs().max() + 1e-9)
         if kind == "tom":
             f = 120 * (1 + 0.5 * torch.exp(-t * 20))
-            y = torch.sin(2 * math.pi * torch.cumsum(f, 0) / self.cfg.sr) * torch.exp(-t * 8)
+            y = torch.sin(2 * math.pi * self._cumsum(f) / self.cfg.sr) * torch.exp(-t * 8)
             return y / (y.abs().max() + 1e-9)
         # perc: short filtered click
         noise = torch.randn(self.n, device=self.device, generator=self.g) * torch.exp(-t * 40)
@@ -329,7 +334,7 @@ class ProceduralMixer:
     def batch(self, batch_size: int, seed: int | None = None):
         if seed is not None:
             self.g.manual_seed(seed)
-        mixes, doms, pitches, acts, sals, metas = [], [], [], [], [], []
+        mixes, doms, pitches, acts, sals, margins, metas = [], [], [], [], [], [], []
         for b in range(batch_size):
             mix, scores, f0s, kinds = self._one()
             S = torch.stack(scores)  # [K,T,192]
@@ -340,6 +345,8 @@ class ProceduralMixer:
             p = pdom.clamp_min(1e-9)
             rest = (total - pdom).clamp_min(1e-9)
             sal = torch.sigmoid((10 * torch.log10(p) - 10 * torch.log10(rest)) / 6.0)
+            top2 = torch.topk(S, 2, dim=0).values
+            margin = 10 * torch.log10((top2[0] + 1e-9) / (top2[1] + 1e-9))
             pitch = torch.zeros(T, fe.BANDS, device=self.device)
             for s, notes in enumerate(f0s):
                 for f0 in notes:
@@ -349,22 +356,44 @@ class ProceduralMixer:
             doms.append(dom)
             pitches.append(pitch)
             sals.append(sal)
+            margins.append(margin.clamp(max=60.0))
             metas.append({"kinds": kinds, "f0": f0s})
         mix = torch.stack(mixes)  # [B,n,2]
         # activity from mixed band power, computed by caller's frontend for exactness
         dom = torch.stack(doms)
         pitch = torch.stack(pitches).clamp(0, 1)
         sal = torch.stack(sals).clamp(0, 1)
-        return {"mix": mix, "dom": dom, "pitch": pitch, "sal": sal, "meta": metas}
+        margin = torch.stack(margins)
+        return {"mix": mix, "dom": dom, "pitch": pitch, "sal": sal, "margin": margin,
+                "meta": metas}
 
 
-def make_labels(mix, dom, pitch, sal, tf: fe.TorchFrontend):
-    """Compute activity from the mix through the exact FE-v1 frontend."""
+def make_labels(mix, dom, pitch, sal, tf: fe.TorchFrontend, margin=None, pitch_mask=None,
+                margin_db=3.0):
+    """Compute exact FE-v1 activity plus training masks.
+
+    Returns a dict: feat, active, pitch, pitch_mask, sal, dom, power, dc_mask.
+    `pitch_mask` is 0 for frames whose pitch is unknown (unlabelled source or
+    silence). `dc_mask` keeps only cells where the dominant source leads the
+    runner-up by `margin_db`.
+    """
     feat, p = tf.features(mix)
-    dbm = 10 * torch.log10(p["M"] + 1e-12)
+    power = p["M"]  # [B,T,192] band power
+    dbm = 10 * torch.log10(power + 1e-12)
     mx = dbm.max(dim=2, keepdim=True).values
     thr = torch.maximum(torch.full_like(mx, -80.0), mx - 60.0)
     active = (dbm > thr).float()
     # weighted salience target only on active bands
     sal = sal * active
-    return feat, active, pitch, sal, dom
+    frame_on = (active.amax(dim=2) > 0.5).float()
+    if pitch_mask is None:
+        pm = frame_on
+    else:
+        pm = pitch_mask.float() * frame_on
+    if margin is None:
+        valid = torch.ones_like(active)
+    else:
+        valid = (margin >= float(margin_db)).float()
+    dc_mask = active * valid
+    return {"feat": feat, "active": active, "pitch": pitch, "pitch_mask": pm,
+            "sal": sal, "dom": dom, "power": power, "dc_mask": dc_mask}

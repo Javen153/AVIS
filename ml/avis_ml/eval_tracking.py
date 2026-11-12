@@ -92,14 +92,51 @@ def reid(curve: dict, gap: int = 40) -> float:
     return ok / total if total else 1.0
 
 
+def real_rows(model: str, n: int, work: Path) -> list[dict]:
+    """Tracking on real held-out clips (MUSDB test, Slakh test); expected count = stems."""
+    from .track_clips import musdb_clips, slakh_clips
+
+    clips = musdb_clips(n, work / "musdb") + slakh_clips(n, work / "slakh")
+    rows = []
+    for c in clips:
+        frames = run_cli(Path(c["wav"]), model, work / f"{Path(c['wav']).stem}.jsonl")
+        counts = [len(f["objects"]) for f in frames]
+        exp = c["sources"]
+        curve = pitch_curve(frames)
+        rows.append({
+            "clip": f"{c['dataset']}:{c['track']}@{c['start']:.0f}",
+            "expected": exp,
+            "count_err": sum(abs(x - exp) for x in counts) / max(len(counts), 1),
+            "count_in_range": round(sum(1 for x in counts if exp - 1 <= x <= exp + 1) / max(len(counts), 1), 3),
+            "id_switches_per_s": round(id_switches(curve), 3),
+            "reid_acc": round(reid(curve), 3),
+            "frames": len(frames),
+        })
+        print(json.dumps(rows[-1], ensure_ascii=False))
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="models/v1")
     ap.add_argument("--only", default="")
     ap.add_argument("--out", default="")
+    ap.add_argument("--real", action="store_true", help="real MUSDB/Slakh test clips")
+    ap.add_argument("--clips", type=int, default=4)
     a = ap.parse_args()
     model = a.model if Path(a.model).is_absolute() else str(ROOT / a.model)
     want = [s.strip().upper() for s in a.only.split(",") if s.strip()]
+    if a.real:
+        work = ROOT / "artifacts" / "eval" / "track_real"
+        work.mkdir(parents=True, exist_ok=True)
+        rows = real_rows(model, a.clips, work)
+        mean = {k: round(sum(r[k] for r in rows) / max(len(rows), 1), 3)
+                for k in ("count_err", "count_in_range", "id_switches_per_s", "reid_acc")}
+        result = {"model": a.model, "real": True, "mean": mean, "clips": rows}
+        print("mean:", json.dumps(mean, ensure_ascii=False))
+        if a.out:
+            Path(a.out).write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        return 0
     rows = []
     with tempfile.TemporaryDirectory() as td:
         for wav in sorted(SCEN.glob("S*.wav")):

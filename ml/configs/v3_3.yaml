@@ -1,0 +1,58 @@
+tag: v3_3
+# M-v3.3: solo coherence term (D-041).
+# v3.2 added solo examples and moved the low/high band embedding cosine on
+# S05/S07 from 0.29/0.33 to 0.44/0.49, but the tracker splits a source below
+# MatchThreshold 0.60 (v3, which keeps one object, sits at 0.93). This run adds
+# an explicit within-example coherence loss for solo examples, i.e. it
+# optimises the exact quantity the tracker uses.
+#
+# Same architecture and ONNX contract; warm start from the v3.2 EMA weights.
+arch: v3
+hid: 208
+steps: 1200
+batch_size: 8
+lr: 1.0e-4
+wd: 1.0e-4
+warmup: 100
+seconds: 4.0
+max_sources: 8
+amp: true
+clip: 1.0
+skip_loss: 25.0
+seed: 0
+init_from: models/v3_2/ckpt_ema900.pt
+
+real: true
+stereo: true
+hard_p: 0.30
+stage_a_steps: 0
+proc_share_start: 0.40
+proc_share_end: 0.45
+real_workers: 0
+real_batch: 16
+mix_distort_p: 0.5
+
+val_batch: 8
+val_proc_examples: 120
+val_real_examples: 120
+val_hard_examples: 48
+val_seed: 777
+val_cell_acc: true
+val_noise: 0.03
+
+pitch_loss: pos_weight
+pitch_pos_weight_max: 20.0
+uncertainty: true
+# keep the loss balance v3.1 converged to (dc/act/pitch/sal)
+log_var_init: [-1.7442, -3.0229, -0.4831, -2.6078]
+dc_margin_db: 3.0
+# mean(1 - cos) inside solo examples, folded into the DC term (reported l_dc
+# stays pure so composite/ckpt selection is comparable across runs)
+solo_coh_w: 0.5
+
+ema_decay: 0.999
+log_every: 20
+ckpt_every: 300
+auto_recover: 20
+patience_val: 2
+early_stop: 3
