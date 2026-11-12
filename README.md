@@ -66,15 +66,37 @@ runtime/       C#: Core, Audio, Render, Cli, App, tests
 shared/        FE-v1 weights, golden-векторы, схемы
 models/<v>/    model.onnx, model.json, frontend.json, weights.bin
 testdata/      сценарии S01–S13 (WAV + expect.json)
-tools/         build, verify, scenarios, publish, run, bg
+tools/         build, verify, scenarios, publish, run, bg, status
 docs/          SPEC, PLAN, STATUS, LOG, DECISIONS, TRAINING, ...
 ```
+
+## Долгие задачи (обучение)
+
+Запуск в фоне: задача работает без своего консольного окна, а рядом открывается
+окно-табло **«AVIS: &lt;имя&gt;»** — шаг, % готовности, скорость, ETA и время
+финиша, текущая фаза и последние строки лога. Окно обновляется каждые 5 секунд и
+остаётся открытым после окончания задачи.
+
+```powershell
+tools\bg.ps1 -Name v3 -Cmd "uv run python -m avis_ml.train --config configs/v3.yaml" -WorkDir "C:\OpenCode\AVIS\ml"
+tools\status.ps1                 # то же табло в текущем окне (все задачи)
+tools\status.ps1 -Name v3        # подробно про одну задачу
+tools\status.ps1 -Name v3 -Watch 5   # живое обновление, Ctrl+C — выход
+```
+
+Весь вывод задачи пишется в `logs\bg\<имя>.log` — там полная история шагов.
+Окно-табло можно закрыть, задача от этого не останавливается (в отличие от
+закрытия окна самой задачи). `-NoMonitor` — без окна, `-Refresh 10` — реже
+обновлять, `-Visible` — показать консоль самой задачи (она будет пустой: текст
+идёт в лог).
 
 ## Ограничения
 
 - Нейро-источник требует обученную модель `models/v1`; без неё приложение
   автоматически переключается на DSP.
-- Обучение шло на процедурном синтезе, а не на Slakh/MUSDB (см. `docs/DECISIONS.md`).
+- Эталонная модель обучена на процедурном синтезе. Реальные MUSDB18-HQ/Slakh
+  подключались в P12: модель на них получилась хуже по всем метрикам, поэтому
+  выдаётся v1 (`docs/DECISIONS.md`, D-033; `TRAINING.md`).
 - WASAPI loopback в тишине не даёт данных — включите воспроизведение.
 - Оверлей работает поверх всех окон, но в некоторых играх с эксклюзивным
   fullscreen может не отображаться.

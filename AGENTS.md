@@ -5,7 +5,11 @@
 - Never edit the start prompt file in the repository root.
 - All user documentation is Russian. Code, comments, commits: English.
 - Keep files under ~400 lines. Do not print tensors/audio; print shape/min/max/NaN count only.
-- Long jobs run through `tools\bg.ps1` (log in `logs/bg/<name>.log`, PID in `logs/bg/<name>.pid`). Never tie a training run to an interactive shell.
+- Long jobs run through `tools\bg.ps1` (log in `logs/bg/<name>.log`, PID in `logs/bg/<name>.pid`).
+  The job itself has no console window; `bg.ps1` opens a progress window titled
+  `AVIS: <name>` (step/rate/ETA/log tail) that survives the job and can be closed safely.
+  Never tie a training run to an interactive shell. `tools\status.ps1 [-Name x] [-Watch 10]`
+  prints the same dashboard without opening a window.
 - Update `docs/STATUS.md` after every meaningful step; append to `docs/LOG.md`; tick `docs/PLAN.md`.
 - Read order after context loss: `AGENTS.md` -> `docs/STATUS.md` -> `docs/PLAN.md` -> needed part of `docs/SPEC.md`.
 
@@ -22,6 +26,8 @@
 $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
 
 tools\check_env.ps1
+tools\bg.ps1 -Name v3 -Cmd "uv run python -m avis_ml.train --config configs/v3.yaml" -WorkDir "C:\OpenCode\AVIS\ml"
+tools\status.ps1 -Name v3        # progress, phase, ETA, warnings; -Watch 10 to refresh
 tools\build.ps1                 # Release x64 -> logs/build.log
 tools\build.ps1 -Test           # build + xunit
 tools\verify.ps1                # all checks -> artifacts/verify/<date>/report.md|json
