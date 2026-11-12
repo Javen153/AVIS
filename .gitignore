@@ -24,3 +24,9 @@ dist/
 models/v1preview/
 models/*/weights.bin
 models/*/frontend.json
+
+# local-only artifacts
+ml/backup_*/
+shared/golden/model_v1/
+*.lnk
+opencode.json
