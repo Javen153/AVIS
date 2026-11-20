@@ -11,6 +11,10 @@ __pycache__/
 *.egg-info/
 *.pt
 *.onnx
+# shipped model exports are versioned (weights + FE tables + ONNX)
+!models/*/model.onnx
+!models/*/weights.bin
+!models/*/frontend.json
 *.onnx.data
 *.wav
 *.flac
@@ -22,8 +26,6 @@ ml/.pytest_cache/
 ml/.mypy_cache/
 dist/
 models/v1preview/
-models/*/weights.bin
-models/*/frontend.json
 
 # local-only artifacts
 ml/backup_*/
